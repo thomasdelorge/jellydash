@@ -21,6 +21,9 @@ final class JellyfinClient
     /** @var array<string, string> per-process cache of itemId => file path */
     private static array $itemPathCache = [];
 
+    /** @var array<string, int|null> per-process cache of itemId => runtime seconds */
+    private static array $itemRuntimeCache = [];
+
     public function __construct(?string $baseUrl = null, ?string $token = null, ?bool $verifySsl = null)
     {
         $this->baseUrl = rtrim((string) ($baseUrl ?? Config::get('JELLYFIN_URL', '')), '/');
@@ -78,6 +81,19 @@ final class JellyfinClient
         } while ($start < $total && $pageItems !== []);
 
         return $items;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function users(): array
+    {
+        $payload = $this->getJson('/Users');
+        if (!is_array($payload)) {
+            return [];
+        }
+
+        return array_values(array_filter($payload, 'is_array'));
     }
 
     /**
@@ -177,6 +193,106 @@ final class JellyfinClient
             : '';
 
         return self::$itemPathCache[$itemId] = $path;
+    }
+
+    /**
+     * Title runtime in seconds from Jellyfin, or null when unknown.
+     * Cached per process. Playback Reporting only stores how long a session
+     * lasted, so history import cannot learn the real runtime without this.
+     */
+    public function itemRuntimeSec(string $itemId): ?int
+    {
+        $runtimes = $this->itemRuntimeSecs([$itemId]);
+
+        return $runtimes[$itemId] ?? null;
+    }
+
+    /**
+     * @param array<int, string> $itemIds
+     * @return array<string, int> requested item id => runtime seconds
+     */
+    public function itemRuntimeSecs(array $itemIds): array
+    {
+        $found = [];
+        $pending = [];
+
+        foreach ($itemIds as $itemId) {
+            $itemId = trim((string) $itemId);
+            if ($itemId === '') {
+                continue;
+            }
+
+            if (array_key_exists($itemId, self::$itemRuntimeCache)) {
+                if (self::$itemRuntimeCache[$itemId] !== null) {
+                    $found[$itemId] = self::$itemRuntimeCache[$itemId];
+                }
+                continue;
+            }
+
+            $pending[$itemId] = true;
+        }
+
+        foreach (array_chunk(array_keys($pending), 80) as $chunk) {
+            foreach ($this->fetchItemRuntimes($chunk) as $itemId => $seconds) {
+                $found[$itemId] = $seconds;
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * @param array<int, string> $itemIds
+     * @return array<string, int>
+     */
+    private function fetchItemRuntimes(array $itemIds): array
+    {
+        $wanted = [];
+        foreach ($itemIds as $itemId) {
+            $wanted[$this->strippedItemId($itemId)][] = $itemId;
+        }
+
+        $payload = $this->getJson('/Items?' . http_build_query(
+            [
+                'Ids' => implode(',', $itemIds),
+                'Fields' => 'RunTimeTicks',
+                'Limit' => count($itemIds),
+            ],
+            '',
+            '&',
+            PHP_QUERY_RFC3986
+        ));
+
+        $items = is_array($payload) && is_array($payload['Items'] ?? null)
+            ? array_values(array_filter($payload['Items'], 'is_array'))
+            : [];
+
+        $found = [];
+        foreach ($items as $item) {
+            $stripped = $this->strippedItemId((string) ($item['Id'] ?? ''));
+            $ticks = (int) ($item['RunTimeTicks'] ?? 0);
+            $seconds = $ticks > 0 ? (int) floor($ticks / 10000000) : null;
+
+            foreach ($wanted[$stripped] ?? [] as $requestedId) {
+                self::$itemRuntimeCache[$requestedId] = $seconds;
+                if ($seconds !== null) {
+                    $found[$requestedId] = $seconds;
+                }
+            }
+        }
+
+        foreach ($itemIds as $itemId) {
+            if (!array_key_exists($itemId, self::$itemRuntimeCache)) {
+                self::$itemRuntimeCache[$itemId] = null;
+            }
+        }
+
+        return $found;
+    }
+
+    private function strippedItemId(string $id): string
+    {
+        return strtolower(str_replace('-', '', trim($id)));
     }
 
     /**

@@ -3,7 +3,7 @@
 {% block dashboard_header %}
     <div class="header-copy">
         <h1>History</h1>
-        <p>Showing {{ summary.shown }} of {{ summary.filtered_total }} plays</p>
+        <p>{% if summary.shown > 0 %}Showing {{ summary.from }}-{{ summary.to }} of {{ summary.filtered_total }} plays{% else %}Showing 0 of {{ summary.filtered_total }} plays{% endif %}</p>
     </div>
     <form class="filter-bar" method="get" action="/history">
         <label class="search-control">
@@ -36,16 +36,88 @@
     {% if groups is empty %}
         {% include "history/_empty.twig" %}
     {% else %}
+        {% include "history/_pager.twig" %}
         {% for group in groups %}
             {% include "history/_day_group.twig" with { group: group } %}
         {% endfor %}
+        {% include "history/_pager.twig" %}
     {% endif %}
+
+    <dialog class="history-dialog" data-history-dialog aria-labelledby="history-dialog-title">
+        <form class="history-dialog-card" data-history-form novalidate>
+            <button class="history-dialog-close" type="button" data-history-close aria-label="Close">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M6 6l12 12"></path>
+                    <path d="M18 6L6 18"></path>
+                </svg>
+            </button>
+
+            <span class="history-dialog-kicker" data-history-user></span>
+            <h2 id="history-dialog-title" data-history-title>Edit play</h2>
+            <p class="history-dialog-sub" data-history-sub></p>
+            <p class="history-dialog-meta" data-history-meta></p>
+
+            <div class="history-dialog-warn" data-history-warn hidden>
+                <strong>Watched time is longer than the title runtime.</strong>
+                <span data-history-warn-copy></span>
+                <button type="button" data-history-clamp>Set to runtime</button>
+            </div>
+
+            <label class="history-dialog-field">
+                <span>Watched</span>
+                <div class="history-duration-inputs">
+                    <input type="number" min="0" max="999" step="1" inputmode="numeric" data-history-hours aria-label="Hours">
+                    <span>h</span>
+                    <input type="number" min="0" max="9999" step="1" inputmode="numeric" data-history-minutes aria-label="Minutes">
+                    <span>m</span>
+                    <input type="number" min="0" max="59" step="1" inputmode="numeric" data-history-seconds aria-label="Seconds">
+                    <span>s</span>
+                </div>
+                <small data-history-runtime></small>
+            </label>
+
+            <section class="history-dialog-merge" data-history-merge hidden>
+                <header>
+                    <strong>Merge duplicates</strong>
+                    <span>Other plays of this title by the same user on the same day. Adds every selected watched time and keeps the earliest start.</span>
+                </header>
+                <div class="history-dialog-siblings" data-history-siblings></div>
+                <button type="button" class="history-dialog-merge-btn" data-history-merge-btn>Merge selected</button>
+            </section>
+
+            <p class="history-dialog-error" data-history-error hidden></p>
+
+            <div class="history-dialog-actions">
+                <button type="button" class="history-dialog-delete" data-history-delete>Delete</button>
+                <button type="submit" class="history-dialog-save">Save</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog class="history-dialog history-confirm" data-history-confirm aria-labelledby="history-confirm-title">
+        <form class="history-dialog-card" method="dialog" data-history-confirm-form>
+            <h2 id="history-confirm-title">Delete this play?</h2>
+            <p class="history-dialog-sub" data-history-confirm-title></p>
+            <p class="history-dialog-meta" data-history-confirm-meta></p>
+            <p class="history-confirm-note">This cannot be undone.</p>
+            <p class="history-dialog-error" data-history-confirm-error hidden></p>
+            <div class="history-dialog-actions">
+                <button type="button" class="history-confirm-cancel" data-history-confirm-cancel>Cancel</button>
+                <button type="button" class="history-dialog-delete" data-history-confirm-delete>Delete</button>
+            </div>
+        </form>
+    </dialog>
 {% endblock %}
+
+{% block page_scripts %}
+    <script src="/assets/js/history.js?v=20260813-confirm"></script>
+{% endblock %}
+
 
 {% block dashboard_footer %}
     <div class="stat-cell">
         <span><i class="dot-purple"></i>Plays shown</span>
-        <strong>{{ summary.shown }} <small>of {{ summary.filtered_total }}</small></strong>
+        <strong>{{ summary.from }}-{{ summary.to }} <small>of {{ summary.filtered_total }}</small></strong>
     </div>
     <div class="stat-cell">
         <span><i class="dot-green"></i>Unique users</span>

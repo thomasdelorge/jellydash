@@ -33,6 +33,9 @@ final class RouterTest extends TestCase
 
         $this->assertStringContainsString('History', $output);
         $this->assertStringContainsString('filter-bar', $output);
+        $this->assertStringContainsString('data-history-dialog', $output);
+        $this->assertStringContainsString('/assets/js/history.js?v=20260813-confirm', $output);
+        $this->assertStringContainsString('data-history-confirm', $output);
         $this->assertSame(200, http_response_code());
     }
 

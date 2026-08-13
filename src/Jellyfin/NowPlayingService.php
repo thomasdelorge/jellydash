@@ -24,7 +24,7 @@ final class NowPlayingService
         $mapper = $this->mapper ?? new JellyfinSessionMapper($client->baseUrl());
         $mapped = $mapper->map($client->sessions());
         /** @var array<int, array<string, mixed>> $streams */
-        $streams = $mapped['streams'];
+        $streams = $this->hydrateAvatars($mapped['streams'], $client);
         $watchToday = 0;
 
         try {
@@ -60,6 +60,42 @@ final class NowPlayingService
         ($this->history ?? new PlayHistoryRepository())->logActiveStreams($streams);
 
         return count($streams);
+    }
+
+    /**
+     * Fill avatarUrl from /Users when the session payload had no image tag.
+     *
+     * @param array<int, array<string, mixed>> $streams
+     * @return array<int, array<string, mixed>>
+     */
+    private function hydrateAvatars(array $streams, JellyfinClient $client): array
+    {
+        $needsLookup = false;
+        foreach ($streams as $stream) {
+            if (($stream['avatarUrl'] ?? '') === '' && (string) ($stream['userId'] ?? '') !== '') {
+                $needsLookup = true;
+                break;
+            }
+        }
+
+        if (!$needsLookup) {
+            return $streams;
+        }
+
+        $avatars = new JellyfinUserAvatars($client);
+        foreach ($streams as &$stream) {
+            if (($stream['avatarUrl'] ?? '') !== '') {
+                continue;
+            }
+
+            $stream['avatarUrl'] = $avatars->url(
+                (string) ($stream['userId'] ?? ''),
+                (string) ($stream['user'] ?? ''),
+            ) ?? '';
+        }
+        unset($stream);
+
+        return $streams;
     }
 
     /**

@@ -6,6 +6,8 @@ namespace Mk\Framework\Pages;
 
 use Mk\Framework\Controller;
 use Mk\Framework\Jellyfin\HistoryFilters;
+use Mk\Framework\Jellyfin\JellyfinClient;
+use Mk\Framework\Jellyfin\JellyfinUserAvatars;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
 use Mk\Framework\Main;
 
@@ -15,16 +17,29 @@ final class HistoryController extends Controller
     {
         $filters = $this->filters();
         $repository = new PlayHistoryRepository();
-        $rows = $repository->historyRows($filters);
         $totalFiltered = $repository->historyTotal($filters);
+        $page = $this->currentPage($totalFiltered, $filters->limit);
+        $filters = new HistoryFilters(
+            search: $filters->search,
+            user: $filters->user,
+            library: $filters->library,
+            range: $filters->range,
+            limit: $filters->limit,
+            offset: ($page - 1) * $filters->limit,
+        );
+        $rows = $repository->historyRows($filters);
+        $rows = $this->hydrateRuntimes($repository, $rows);
+        $avatars = new JellyfinUserAvatars();
+        $pages = max(1, (int) ceil($totalFiltered / max(1, $filters->limit)));
 
         $this->render('history/index', [
             'layout' => $this->layout([
                 'title' => 'History',
                 'page' => 'history',
             ]),
-            'groups' => $this->groups($rows),
-            'summary' => $this->summary($rows, $totalFiltered, $repository->totalRows()),
+            'groups' => $this->groups($rows, $avatars),
+            'summary' => $this->summary($rows, $totalFiltered, $repository->totalRows(), $filters->offset),
+            'pager' => $this->pager($page, $pages, $filters),
             'users' => $repository->users(),
             'filters' => [
                 'search' => $filters->search,
@@ -50,11 +65,79 @@ final class HistoryController extends Controller
         );
     }
 
+    private function currentPage(int $total, int $perPage): int
+    {
+        $page = (int) (Main::captureGetString('p') ?? '1');
+        if ($page < 1) {
+            $page = 1;
+        }
+
+        $pages = max(1, (int) ceil($total / max(1, $perPage)));
+
+        return min($page, $pages);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function pager(int $page, int $pages, HistoryFilters $filters): array
+    {
+        return [
+            'page' => $page,
+            'pages' => $pages,
+            'prev_url' => $page > 1 ? $this->historyUrl($filters, $page - 1) : '',
+            'next_url' => $page < $pages ? $this->historyUrl($filters, $page + 1) : '',
+        ];
+    }
+
+    private function historyUrl(HistoryFilters $filters, int $page): string
+    {
+        $query = array_filter([
+            'search' => $filters->search,
+            'user' => $filters->user,
+            'library' => $filters->library,
+            'range' => $filters->range !== '30' ? $filters->range : '',
+        ], static fn (string $value): bool => $value !== '');
+
+        if ($page > 1) {
+            $query['p'] = (string) $page;
+        }
+
+        return '/history' . ($query === [] ? '' : '?' . http_build_query($query));
+    }
+
+    /**
+     * Imported plays stored session length as runtime. Refresh those against
+     * Jellyfin so the orange flag uses the real title duration.
+     *
+     * @param array<int, \Dibi\Row> $rows
+     * @return array<int, \Dibi\Row>
+     */
+    private function hydrateRuntimes(PlayHistoryRepository $repository, array $rows): array
+    {
+        $ids = $repository->itemIdsNeedingRuntimeLookup($rows);
+        if ($ids === []) {
+            return $rows;
+        }
+
+        try {
+            $runtimes = (new JellyfinClient())->itemRuntimeSecs($ids);
+        } catch (\Throwable) {
+            return $rows;
+        }
+
+        if ($runtimes === []) {
+            return $rows;
+        }
+
+        return $repository->applyLookedUpRuntimes($rows, $runtimes);
+    }
+
     /**
      * @param array<int, \Dibi\Row> $rows
      * @return array<int, array<string, mixed>>
      */
-    private function groups(array $rows): array
+    private function groups(array $rows, JellyfinUserAvatars $avatars): array
     {
         $groups = [];
         $today = (new \DateTimeImmutable('today'))->format('Y-m-d');
@@ -69,16 +152,16 @@ final class HistoryController extends Controller
                     'label' => match ($dayKey) {
                         $today => 'Today',
                         $yesterday => 'Yesterday',
-                        default => $startedAt->format('l, M j'),
+                        default => $startedAt->format('l, M j, Y'),
                     },
-                    'dateSub' => $startedAt->format('l, M j'),
+                    'dateSub' => $startedAt->format('l, M j, Y'),
                     'summary' => '',
                     'plays' => [],
                     'watch_sec' => 0,
                 ];
             }
 
-            $play = $this->rowView($row, $startedAt);
+            $play = $this->rowView($row, $startedAt, $avatars);
             $groups[$dayKey]['watch_sec'] += (int) $row['watched_sec'];
             $groups[$dayKey]['plays'][] = $play;
         }
@@ -97,7 +180,7 @@ final class HistoryController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function rowView(\Dibi\Row $row, \DateTimeImmutable $startedAt): array
+    private function rowView(\Dibi\Row $row, \DateTimeImmutable $startedAt, JellyfinUserAvatars $avatars): array
     {
         $itemType = (string) $row['item_type'];
         $isTranscode = (string) $row['play_method'] === 'Transcode';
@@ -108,9 +191,14 @@ final class HistoryController extends Controller
         $itemName = (string) ($row['item_name'] ?? 'Unknown title');
 
         return [
+            'id' => (int) $row['id'],
             'time' => $startedAt->format('H:i'),
             'user' => (string) ($row['user_name'] ?? 'Unknown user'),
             'initials' => $this->initials((string) ($row['user_name'] ?? 'Unknown user')),
+            'avatarUrl' => $avatars->url(
+                (string) ($row['user_id'] ?? ''),
+                (string) ($row['user_name'] ?? ''),
+            ) ?? '',
             'title' => $itemType === 'Episode' && $seriesName !== '' ? $seriesName : $itemName,
             'sub' => $itemType === 'Episode'
                 ? trim((string) ($row['season_ep'] ?? '') . ' - ' . $itemName, ' -')
@@ -123,6 +211,7 @@ final class HistoryController extends Controller
             'watchedLabel' => $this->durationLabel($watchedSec),
             'completionPct' => $completion,
             'finished' => (bool) $row['is_finished'] || $completion >= 95,
+            'exceedsRuntime' => $runtimeSec > 0 && $watchedSec > $runtimeSec,
             'poster' => $this->poster((string) $row['item_id'], $itemType),
         ];
     }
@@ -131,7 +220,7 @@ final class HistoryController extends Controller
      * @param array<int, \Dibi\Row> $rows
      * @return array<string, mixed>
      */
-    private function summary(array $rows, int $totalFiltered, int $totalRows): array
+    private function summary(array $rows, int $totalFiltered, int $totalRows, int $offset): array
     {
         $watchSec = 0;
         $users = [];
@@ -152,6 +241,8 @@ final class HistoryController extends Controller
 
         return [
             'shown' => $shown,
+            'from' => $shown === 0 ? 0 : $offset + 1,
+            'to' => $offset + $shown,
             'total' => $totalRows,
             'filtered_total' => $totalFiltered,
             'unique_users' => count($users),

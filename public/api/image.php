@@ -23,11 +23,84 @@ if (session_status() === PHP_SESSION_ACTIVE) {
 }
 
 $itemId = (string) ($_GET['item'] ?? '');
+$userId = (string) ($_GET['user'] ?? '');
 $type = (string) ($_GET['type'] ?? 'Backdrop');
 $maxWidth = (int) ($_GET['maxWidth'] ?? 1280);
 // kind=series resolves an episode to its parent series so we can show the
 // series poster instead of the per-episode still.
 $kind = (string) ($_GET['kind'] ?? '');
+
+$baseUrl = rtrim((string) Config::get('JELLYFIN_URL', ''), '/');
+$token = (string) Config::get('JELLYFIN_API_TOKEN', Config::get('JELLYFIN_API_KEY', ''));
+
+if ($baseUrl === '' || $token === '') {
+    http_response_code(404);
+    exit;
+}
+
+$verifySsl = Config::bool('JELLYFIN_VERIFY_SSL', true);
+
+if ($userId !== '') {
+    if (!preg_match('/^[A-Za-z0-9_-]+$/', $userId)) {
+        http_response_code(400);
+        exit;
+    }
+
+    $url = $baseUrl . '/Users/' . rawurlencode($userId) . '/Images/Primary'
+        . '?maxWidth=' . max(32, min(256, $maxWidth > 0 ? $maxWidth : 80));
+    $tag = (string) ($_GET['tag'] ?? '');
+    if ($tag !== '' && preg_match('/^[A-Za-z0-9._-]+$/', $tag)) {
+        $url .= '&tag=' . rawurlencode($tag);
+    }
+
+    $handle = curl_init($url);
+    if ($handle === false) {
+        http_response_code(404);
+        exit;
+    }
+
+    curl_setopt_array($handle, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HEADER => true,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: MediaBrowser Token="' . $token . '"',
+        ],
+        CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_SSL_VERIFYPEER => $verifySsl,
+        CURLOPT_SSL_VERIFYHOST => $verifySsl ? 2 : 0,
+    ]);
+
+    $response = curl_exec($handle);
+    $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+    $headerSize = (int) curl_getinfo($handle, CURLINFO_HEADER_SIZE);
+    $contentType = (string) curl_getinfo($handle, CURLINFO_CONTENT_TYPE);
+    $error = curl_error($handle);
+    curl_close($handle);
+
+    if ($response === false) {
+        Log::logErrorMessage('Jellyfin user image request failed: ' . $error, 'image.php');
+        http_response_code(404);
+        exit;
+    }
+
+    if ($status < 200 || $status >= 300) {
+        http_response_code(404);
+        exit;
+    }
+
+    $body = substr((string) $response, $headerSize);
+    $safeContentType = ImageContentType::normalize($contentType);
+    if ($body === '' || $safeContentType === null) {
+        http_response_code(404);
+        exit;
+    }
+
+    header('Content-Type: ' . $safeContentType);
+    header('Cache-Control: public, max-age=3600');
+    echo $body;
+    exit;
+}
 
 if ($itemId === '' || !preg_match('/^[A-Za-z0-9_-]+$/', $itemId)) {
     http_response_code(400);
@@ -39,16 +112,7 @@ if (!in_array($type, $allowedTypes, true)) {
     $type = 'Backdrop';
 }
 
-$baseUrl = rtrim((string) Config::get('JELLYFIN_URL', ''), '/');
-$token = (string) Config::get('JELLYFIN_API_TOKEN', Config::get('JELLYFIN_API_KEY', ''));
-
-if ($baseUrl === '' || $token === '') {
-    http_response_code(404);
-    exit;
-}
-
 $fallbackTypes = array_values(array_unique([$type, 'Backdrop', 'Thumb', 'Primary']));
-$verifySsl = Config::bool('JELLYFIN_VERIFY_SSL', true);
 
 // Resolve episode -> series so TV history rows show the series poster.
 // On any failure we keep the original item id (falls back to its own image).
