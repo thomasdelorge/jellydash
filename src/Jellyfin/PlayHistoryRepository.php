@@ -73,7 +73,7 @@ final class PlayHistoryRepository
 
             $previousWatchedSec = ($existing && !$isNewPlay) ? (int) $existing['watched_sec'] : 0;
             $watchedSec = max($position, $previousWatchedSec);
-            $isFinished = $runtimeSec > 0 && $watchedSec >= (int) floor($runtimeSec * 0.95);
+            $isFinished = $this->isFinished($watchedSec, $runtimeSec);
 
             $data = [
                 'user_id' => $this->nullableString($stream['userId'] ?? null),
@@ -287,6 +287,123 @@ final class PlayHistoryRepository
         return $selection->orderBy('started_at')->asc()->fetchAll();
     }
 
+    public function findById(int $id): ?\Dibi\Row
+    {
+        if ($id < 1) {
+            return null;
+        }
+
+        $row = $this->db->select('*')
+            ->from('play_history')
+            ->where('id = %i', $id)
+            ->fetch();
+
+        return $row instanceof \Dibi\Row ? $row : null;
+    }
+
+    /**
+     * Writes the title runtime onto every play of that item and recomputes
+     * is_finished from the new value. Used after looking the length up on
+     * Jellyfin (imported plays stored session duration as runtime).
+     */
+    public function updateRuntimeForItem(string $itemId, int $runtimeSec): int
+    {
+        $itemId = trim($itemId);
+        $runtimeSec = max(0, $runtimeSec);
+        if ($itemId === '') {
+            return 0;
+        }
+
+        $rows = $this->db->select('id, watched_sec, runtime_sec, started_at, updated_at, ended_at')
+            ->from('play_history')
+            ->where('item_id = %s', $itemId)
+            ->fetchAll();
+
+        $updated = 0;
+        foreach ($rows as $row) {
+            if ((int) $row['runtime_sec'] === $runtimeSec) {
+                continue;
+            }
+
+            $watchedSec = (int) $row['watched_sec'];
+            $finished = $this->isFinished($watchedSec, $runtimeSec);
+            $this->db->update('play_history', [
+                'runtime_sec' => $runtimeSec,
+                'is_finished' => $finished ? 1 : 0,
+                'ended_at' => $finished ? $this->endedAtForFinished($row) : null,
+            ])
+                ->where('id = %i', (int) $row['id'])
+                ->execute();
+            $updated++;
+        }
+
+        return $updated;
+    }
+
+    /**
+     * Item ids whose stored runtime is at most the watched time. That is the
+     * Playback Reporting import pattern (session length copied as runtime) and
+     * the only case the orange "over runtime" flag can fire.
+     *
+     * @param array<int, \Dibi\Row> $rows
+     * @return array<int, string>
+     */
+    public function itemIdsNeedingRuntimeLookup(array $rows): array
+    {
+        $ids = [];
+        foreach ($rows as $row) {
+            $itemId = trim((string) ($row['item_id'] ?? ''));
+            $runtimeSec = (int) ($row['runtime_sec'] ?? 0);
+            $watchedSec = (int) ($row['watched_sec'] ?? 0);
+            if ($itemId === '' || $runtimeSec <= 0 || $watchedSec < $runtimeSec) {
+                continue;
+            }
+
+            $ids[$itemId] = true;
+        }
+
+        return array_keys($ids);
+    }
+
+    /**
+     * Persist Jellyfin title runtimes and copy them onto the in-memory rows
+     * so the current page can flag over-runtime against the real length.
+     *
+     * @param array<int, \Dibi\Row> $rows
+     * @param array<string, int> $runtimeByItemId
+     * @return array<int, \Dibi\Row>
+     */
+    public function applyLookedUpRuntimes(array $rows, array $runtimeByItemId): array
+    {
+        $byStripped = [];
+        foreach ($runtimeByItemId as $itemId => $runtimeSec) {
+            $runtimeSec = max(0, (int) $runtimeSec);
+            if ($runtimeSec <= 0) {
+                continue;
+            }
+
+            $this->updateRuntimeForItem((string) $itemId, $runtimeSec);
+            $byStripped[$this->strippedItemId((string) $itemId)] = $runtimeSec;
+        }
+
+        foreach ($rows as $row) {
+            $runtimeSec = $byStripped[$this->strippedItemId((string) $row['item_id'])] ?? 0;
+            if ($runtimeSec <= 0) {
+                continue;
+            }
+
+            $row['runtime_sec'] = $runtimeSec;
+            $row['is_finished'] = $this->isFinished((int) $row['watched_sec'], $runtimeSec) ? 1 : 0;
+        }
+
+        return $rows;
+    }
+
+    private function strippedItemId(string $id): string
+    {
+        return strtolower(str_replace('-', '', trim($id)));
+    }
+
     /**
      * @return array<int, string>
      */
@@ -436,6 +553,29 @@ final class PlayHistoryRepository
         $reasons = array_values(array_filter(array_map('strval', $value)));
 
         return $reasons === [] ? null : json_encode($reasons, JSON_THROW_ON_ERROR);
+    }
+
+    private function isFinished(int $watchedSec, int $runtimeSec): bool
+    {
+        return $runtimeSec > 0 && $watchedSec >= (int) floor($runtimeSec * 0.95);
+    }
+
+    private function endedAtForFinished(\Dibi\Row $row): string
+    {
+        if ($row['ended_at'] !== null && $row['ended_at'] !== '') {
+            return $this->sqlDateValue($row['ended_at']);
+        }
+
+        return $this->sqlDateValue($row['updated_at']);
+    }
+
+    private function sqlDateValue(mixed $value): string
+    {
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d H:i:s');
+        }
+
+        return (new \DateTimeImmutable((string) $value))->format('Y-m-d H:i:s');
     }
 
     private function filteredSelection(HistoryFilters $filters, ?\DateTimeImmutable $now, string $columns = '*'): \Dibi\Fluent

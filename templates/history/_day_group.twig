@@ -2,7 +2,9 @@
     <header class="history-day-header">
         <div>
             <h2>{{ group.label }}</h2>
-            <span>{{ group.dateSub }}</span>
+            {% if group.dateSub != group.label %}
+                <span>{{ group.dateSub }}</span>
+            {% endif %}
         </div>
         <strong>{{ group.summary }}</strong>
     </header>
