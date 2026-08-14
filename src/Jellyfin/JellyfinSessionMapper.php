@@ -120,6 +120,10 @@ final class JellyfinSessionMapper
             'subtitle' => $this->subtitle($item, $type),
             'user' => $user,
             'initials' => $this->initials($user),
+            'avatarUrl' => JellyfinUserAvatars::proxyUrl(
+                (string) ($session['UserId'] ?? ''),
+                (string) ($session['UserPrimaryImageTag'] ?? ''),
+            ) ?? '',
             'deviceLine' => trim((string) ($session['DeviceName'] ?? 'Unknown device') . ' - ' . (string) ($session['Client'] ?? 'Unknown client')),
             'quality' => $this->quality($item, $session, $isTranscode),
             'isTranscode' => $isTranscode,
