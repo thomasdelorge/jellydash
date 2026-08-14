@@ -287,6 +287,163 @@ final class PlayHistoryRepository
         return $selection->orderBy('started_at')->asc()->fetchAll();
     }
 
+    public function findById(int $id): ?\Dibi\Row
+    {
+        if ($id < 1) {
+            return null;
+        }
+
+        $row = $this->db->select('*')
+            ->from('play_history')
+            ->where('id = %i', $id)
+            ->fetch();
+
+        return $row instanceof \Dibi\Row ? $row : null;
+    }
+
+    public function deleteById(int $id): bool
+    {
+        if ($id < 1) {
+            return false;
+        }
+
+        $this->db->delete('play_history')
+            ->where('id = %i', $id)
+            ->execute();
+
+        return $this->db->getAffectedRows() === 1;
+    }
+
+    public function updateWatchedSec(int $id, int $watchedSec): ?\Dibi\Row
+    {
+        $row = $this->findById($id);
+        if ($row === null) {
+            return null;
+        }
+
+        $watchedSec = max(0, $watchedSec);
+        $runtimeSec = (int) $row['runtime_sec'];
+        $finished = $this->isFinished($watchedSec, $runtimeSec);
+
+        $this->db->update('play_history', [
+            'watched_sec' => $watchedSec,
+            'is_finished' => $finished ? 1 : 0,
+            'ended_at' => $finished ? $this->endedAtForFinished($row) : null,
+        ])
+            ->where('id = %i', $id)
+            ->execute();
+
+        return $this->findById($id);
+    }
+
+    /**
+     * Other plays of the same item by the same user on the same day, newest first.
+     *
+     * @return array<int, \Dibi\Row>
+     */
+    public function mergeCandidates(int $id, int $limit = 50): array
+    {
+        $row = $this->findById($id);
+        if ($row === null) {
+            return [];
+        }
+
+        $selection = $this->sameWorkSelection($row)
+            ->where('id != %i', $id)
+            ->orderBy('started_at')->desc()
+            ->limit(max(1, $limit));
+
+        return $selection->fetchAll();
+    }
+
+    /**
+     * Fold $sourceIds into $keepId: earliest start, summed watched time
+     * (each over-runtime play is clamped first so a 24h glitch cannot dominate),
+     * then delete the extras.
+     *
+     * @param array<int, int> $sourceIds
+     */
+    public function mergePlays(int $keepId, array $sourceIds): ?\Dibi\Row
+    {
+        $sourceIds = $this->normalizedIds($sourceIds, $keepId);
+        if ($keepId < 1 || $sourceIds === []) {
+            return null;
+        }
+
+        $this->db->begin();
+
+        try {
+            $keep = $this->findById($keepId);
+            if ($keep === null) {
+                $this->db->rollback();
+
+                return null;
+            }
+
+            $sources = $this->sameWorkSelection($keep)
+                ->where('id IN %in', $sourceIds)
+                ->fetchAll();
+
+            if (count($sources) !== count($sourceIds)) {
+                $this->db->rollback();
+
+                return null;
+            }
+
+            $rows = [$keep, ...$sources];
+            $runtimeSec = 0;
+            $watchedSec = 0;
+            $startedAt = $this->sqlDateValue($keep['started_at']);
+            $updatedAt = $this->sqlDateValue($keep['updated_at']);
+
+            foreach ($rows as $row) {
+                $rowRuntime = (int) $row['runtime_sec'];
+                $rowWatched = (int) $row['watched_sec'];
+                if ($rowRuntime > 0 && $rowWatched > $rowRuntime) {
+                    $rowWatched = $rowRuntime;
+                }
+
+                $runtimeSec = max($runtimeSec, $rowRuntime);
+                $watchedSec += $rowWatched;
+                $startedAt = min($startedAt, $this->sqlDateValue($row['started_at']));
+                $updatedAt = max($updatedAt, $this->sqlDateValue($row['updated_at']));
+            }
+
+            $finished = $this->isFinished($watchedSec, $runtimeSec);
+            $endedAt = null;
+            if ($finished) {
+                $endedAt = $updatedAt;
+                foreach ($rows as $row) {
+                    if ($row['ended_at'] !== null && $row['ended_at'] !== '') {
+                        $endedAt = max($endedAt, $this->sqlDateValue($row['ended_at']));
+                    }
+                }
+            }
+
+            $this->db->update('play_history', [
+                'watched_sec' => $watchedSec,
+                'runtime_sec' => $runtimeSec,
+                'started_at' => $startedAt,
+                'updated_at' => $updatedAt,
+                'ended_at' => $finished ? $endedAt : null,
+                'is_finished' => $finished ? 1 : 0,
+            ])
+                ->where('id = %i', $keepId)
+                ->execute();
+
+            $this->db->delete('play_history')
+                ->where('id IN %in', $sourceIds)
+                ->execute();
+
+            $this->db->commit();
+        } catch (\Throwable $e) {
+            $this->db->rollback();
+            throw $e;
+        }
+
+        return $this->findById($keepId);
+    }
+
     /**
      * @return array<int, string>
      */
@@ -436,6 +593,76 @@ final class PlayHistoryRepository
         $reasons = array_values(array_filter(array_map('strval', $value)));
 
         return $reasons === [] ? null : json_encode($reasons, JSON_THROW_ON_ERROR);
+    }
+
+    private function isFinished(int $watchedSec, int $runtimeSec): bool
+    {
+        return $runtimeSec > 0 && $watchedSec >= (int) floor($runtimeSec * 0.95);
+    }
+
+    private function endedAtForFinished(\Dibi\Row $row): string
+    {
+        if ($row['ended_at'] !== null && $row['ended_at'] !== '') {
+            return $this->sqlDateValue($row['ended_at']);
+        }
+
+        return $this->sqlDateValue($row['updated_at']);
+    }
+
+    private function sameWorkSelection(\Dibi\Row $row): \Dibi\Fluent
+    {
+        $selection = $this->db->select('*')
+            ->from('play_history')
+            ->where('item_id = %s', (string) $row['item_id']);
+
+        $userId = trim((string) ($row['user_id'] ?? ''));
+        $userName = trim((string) ($row['user_name'] ?? ''));
+        $dayStart = substr($this->sqlDateValue($row['started_at']), 0, 10) . ' 00:00:00';
+        $dayEnd = (new \DateTimeImmutable(substr($dayStart, 0, 10)))
+            ->modify('+1 day')
+            ->format('Y-m-d') . ' 00:00:00';
+
+        if ($userId !== '' && $userName !== '') {
+            $selection->where('(user_id = %s OR ((user_id IS NULL OR user_id = %s) AND user_name = %s))', $userId, '', $userName);
+        } elseif ($userId !== '') {
+            $selection->where('user_id = %s', $userId);
+        } elseif ($userName !== '') {
+            $selection->where('user_name = %s', $userName);
+        } else {
+            $selection->where('id = %i', 0);
+        }
+
+        $selection->where('started_at >= %s', $dayStart);
+        $selection->where('started_at < %s', $dayEnd);
+
+        return $selection;
+    }
+
+    /**
+     * @param array<int, mixed> $ids
+     * @return array<int, int>
+     */
+    private function normalizedIds(array $ids, int $keepId): array
+    {
+        $normalized = [];
+
+        foreach ($ids as $id) {
+            $id = (int) $id;
+            if ($id > 0 && $id !== $keepId) {
+                $normalized[$id] = $id;
+            }
+        }
+
+        return array_values($normalized);
+    }
+
+    private function sqlDateValue(mixed $value): string
+    {
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d H:i:s');
+        }
+
+        return (new \DateTimeImmutable((string) $value))->format('Y-m-d H:i:s');
     }
 
     private function filteredSelection(HistoryFilters $filters, ?\DateTimeImmutable $now, string $columns = '*'): \Dibi\Fluent

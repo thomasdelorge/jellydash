@@ -136,6 +136,227 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertContains('PHPUnit Viewer', $this->repository->users());
     }
 
+    public function testUpdateWatchedSecMarksFinishedNearRuntime(): void
+    {
+        $id = $this->insertPlay([
+            'session_key' => 'phpunit-edit',
+            'watched_sec' => 600,
+            'runtime_sec' => 3600,
+            'is_finished' => 0,
+        ]);
+
+        $row = $this->repository->updateWatchedSec($id, 3500);
+
+        $this->assertNotNull($row);
+        $this->assertSame(3500, (int) $row['watched_sec']);
+        $this->assertSame(1, (int) $row['is_finished']);
+        $this->assertNotNull($row['ended_at']);
+    }
+
+    public function testUpdateWatchedSecClearsFinishedWhenRewound(): void
+    {
+        $id = $this->insertPlay([
+            'session_key' => 'phpunit-rewind',
+            'watched_sec' => 3600,
+            'runtime_sec' => 3600,
+            'is_finished' => 1,
+            'ended_at' => '2099-06-19 13:00:00',
+        ]);
+
+        $row = $this->repository->updateWatchedSec($id, 120);
+
+        $this->assertNotNull($row);
+        $this->assertSame(120, (int) $row['watched_sec']);
+        $this->assertSame(0, (int) $row['is_finished']);
+        $this->assertNull($row['ended_at']);
+    }
+
+    public function testDeleteByIdRemovesRow(): void
+    {
+        $id = $this->insertPlay(['session_key' => 'phpunit-delete']);
+
+        $this->assertTrue($this->repository->deleteById($id));
+        $this->assertNull($this->repository->findById($id));
+        $this->assertFalse($this->repository->deleteById($id));
+    }
+
+    public function testMergePlaysSumsWatchedTimeAndClampsEachOverRuntimePlay(): void
+    {
+        $keepId = $this->insertPlay([
+            'session_key' => 'phpunit-merge-keep',
+            'item_id' => 'phpunit-merge-item',
+            'watched_sec' => 86400,
+            'runtime_sec' => 3600,
+            'started_at' => '2099-06-19 20:10:00',
+            'updated_at' => '2099-06-19 20:20:00',
+        ]);
+        $otherId = $this->insertPlay([
+            'session_key' => 'phpunit-merge-other',
+            'item_id' => 'phpunit-merge-item',
+            'watched_sec' => 900,
+            'runtime_sec' => 3600,
+            'started_at' => '2099-06-19 19:50:00',
+            'updated_at' => '2099-06-19 20:00:00',
+        ]);
+
+        $merged = $this->repository->mergePlays($keepId, [$otherId]);
+
+        $this->assertNotNull($merged);
+        $this->assertSame(4500, (int) $merged['watched_sec']);
+        $this->assertSame(1, (int) $merged['is_finished']);
+        $this->assertNull($this->repository->findById($otherId));
+
+        $started = $merged['started_at'] instanceof \DateTimeInterface
+            ? \DateTimeImmutable::createFromInterface($merged['started_at'])
+            : new \DateTimeImmutable((string) $merged['started_at']);
+        $this->assertSame('2099-06-19 19:50:00', $started->format('Y-m-d H:i:s'));
+    }
+
+    public function testMergePlaysAddsEverySelectedPlayEvenPastRuntime(): void
+    {
+        $keepId = $this->insertPlay([
+            'session_key' => 'phpunit-merge-four-a',
+            'item_id' => 'phpunit-merge-four',
+            'watched_sec' => 400,
+            'runtime_sec' => 1000,
+        ]);
+        $ids = [];
+        foreach (['b', 'c', 'd'] as $suffix) {
+            $ids[] = $this->insertPlay([
+                'session_key' => 'phpunit-merge-four-' . $suffix,
+                'item_id' => 'phpunit-merge-four',
+                'watched_sec' => 400,
+                'runtime_sec' => 1000,
+            ]);
+        }
+
+        $merged = $this->repository->mergePlays($keepId, $ids);
+
+        $this->assertNotNull($merged);
+        $this->assertSame(1600, (int) $merged['watched_sec']);
+        foreach ($ids as $id) {
+            $this->assertNull($this->repository->findById($id));
+        }
+    }
+
+    public function testMergePlaysAddsPartialWatchedTimes(): void
+    {
+        $keepId = $this->insertPlay([
+            'session_key' => 'phpunit-merge-sum-a',
+            'item_id' => 'phpunit-merge-sum',
+            'watched_sec' => 600,
+            'runtime_sec' => 3600,
+        ]);
+        $otherId = $this->insertPlay([
+            'session_key' => 'phpunit-merge-sum-b',
+            'item_id' => 'phpunit-merge-sum',
+            'watched_sec' => 900,
+            'runtime_sec' => 3600,
+        ]);
+
+        $merged = $this->repository->mergePlays($keepId, [$otherId]);
+
+        $this->assertNotNull($merged);
+        $this->assertSame(1500, (int) $merged['watched_sec']);
+        $this->assertSame(0, (int) $merged['is_finished']);
+    }
+
+    public function testMergePlaysRejectsDifferentItemOrUser(): void
+    {
+        $keepId = $this->insertPlay([
+            'session_key' => 'phpunit-merge-a',
+            'item_id' => 'phpunit-item-a',
+        ]);
+        $otherItem = $this->insertPlay([
+            'session_key' => 'phpunit-merge-b',
+            'item_id' => 'phpunit-item-b',
+        ]);
+        $otherUser = $this->insertPlay([
+            'session_key' => 'phpunit-merge-c',
+            'item_id' => 'phpunit-item-a',
+            'user_id' => 'phpunit-someone-else',
+            'user_name' => 'Someone Else',
+        ]);
+
+        $this->assertNull($this->repository->mergePlays($keepId, [$otherItem]));
+        $this->assertNull($this->repository->mergePlays($keepId, [$otherUser]));
+        $this->assertNotNull($this->repository->findById($keepId));
+        $this->assertNotNull($this->repository->findById($otherItem));
+        $this->assertNotNull($this->repository->findById($otherUser));
+    }
+
+    public function testMergeCandidatesListsSameWorkAndUser(): void
+    {
+        $keepId = $this->insertPlay([
+            'session_key' => 'phpunit-sib-keep',
+            'item_id' => 'phpunit-sib-item',
+        ]);
+        $matchId = $this->insertPlay([
+            'session_key' => 'phpunit-sib-match',
+            'item_id' => 'phpunit-sib-item',
+            'started_at' => '2099-06-19 11:00:00',
+        ]);
+        $this->insertPlay([
+            'session_key' => 'phpunit-sib-other',
+            'item_id' => 'phpunit-other-item',
+        ]);
+        $this->insertPlay([
+            'session_key' => 'phpunit-sib-nextday',
+            'item_id' => 'phpunit-sib-item',
+            'started_at' => '2099-06-20 11:00:00',
+        ]);
+
+        $candidates = $this->repository->mergeCandidates($keepId);
+        $ids = array_map(static fn ($row): int => (int) $row['id'], $candidates);
+
+        $this->assertSame([$matchId], $ids);
+    }
+
+    public function testMergePlaysRejectsDifferentDay(): void
+    {
+        $keepId = $this->insertPlay([
+            'session_key' => 'phpunit-merge-day-a',
+            'item_id' => 'phpunit-merge-day',
+            'started_at' => '2099-06-19 22:00:00',
+        ]);
+        $nextDay = $this->insertPlay([
+            'session_key' => 'phpunit-merge-day-b',
+            'item_id' => 'phpunit-merge-day',
+            'started_at' => '2099-06-20 01:00:00',
+        ]);
+
+        $this->assertNull($this->repository->mergePlays($keepId, [$nextDay]));
+        $this->assertNotNull($this->repository->findById($keepId));
+        $this->assertNotNull($this->repository->findById($nextDay));
+    }
+
+    /**
+     * @param array<string, mixed> $overrides
+     */
+    private function insertPlay(array $overrides = []): int
+    {
+        $this->dibi->insert('play_history', array_merge([
+            'session_key' => 'phpunit-' . bin2hex(random_bytes(4)),
+            'user_id' => 'phpunit-user',
+            'user_name' => 'PHPUnit Viewer',
+            'item_id' => 'phpunit-item',
+            'item_type' => 'Movie',
+            'item_name' => 'Arrival',
+            'library' => 'Movies',
+            'play_method' => 'DirectPlay',
+            'client' => 'Web',
+            'device' => 'MacBook',
+            'watched_sec' => 600,
+            'runtime_sec' => 3600,
+            'started_at' => '2099-06-19 12:00:00',
+            'updated_at' => '2099-06-19 12:10:00',
+            'is_finished' => 0,
+            'notified' => 1,
+        ], $overrides))->execute();
+
+        return (int) $this->dibi->getInsertId();
+    }
+
     /**
      * @return array<string, mixed>
      */

@@ -108,6 +108,7 @@ final class HistoryController extends Controller
         $itemName = (string) ($row['item_name'] ?? 'Unknown title');
 
         return [
+            'id' => (int) $row['id'],
             'time' => $startedAt->format('H:i'),
             'user' => (string) ($row['user_name'] ?? 'Unknown user'),
             'initials' => $this->initials((string) ($row['user_name'] ?? 'Unknown user')),
