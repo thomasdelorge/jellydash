@@ -6,6 +6,7 @@ namespace Mk\Framework\Jellyfin;
 
 use Mk\Framework\AppSettings;
 use Mk\Framework\Config;
+use Mk\Framework\Jellyseerr\RequestWatchRateService;
 
 final class PlaybackStatisticsService
 {
@@ -30,22 +31,33 @@ final class PlaybackStatisticsService
     /** @var array<string, array<int, string>>|null Excluded-library locations, fetched once per render. */
     private ?array $locationsCache = null;
 
+    /** Jellyfin username the page is scoped to, or null for the global view. */
+    private ?string $filterUser = null;
+
+    private ?string $filterLibrary = null;
+
+    private string $filterRange = 'month';
+
     /**
      * @return array<string, mixed>
      */
-    public function data(string $range, ?\DateTimeImmutable $now = null): array
+    public function data(string $range, ?string $user = null, ?\DateTimeImmutable $now = null, ?string $library = null): array
     {
-        $range = array_key_exists($range, self::RANGES) ? $range : 'week';
+        $range = array_key_exists($range, self::RANGES) ? $range : 'month';
         $now ??= new \DateTimeImmutable('now');
+        $this->filterUser = ($user !== null && $user !== '') ? $user : null;
+        $this->filterLibrary = ($library !== null && $library !== '') ? $library : null;
+        $this->filterRange = array_key_exists($range, self::RANGES) ? $range : 'month';
         $repository = $this->repository ?? new PlayHistoryRepository();
-        $rows = $repository->statisticsRows($range, $now);
+        $rows = $repository->statisticsRows($range, $now, $this->filterUser, $this->filterLibrary);
         $previousRows = $this->previousRows($repository, $range, $now);
 
-        $users = $this->users($rows);
+        $users = $this->users($rows, $range);
         $clients = $this->clients($rows);
         $directness = $this->directness($rows);
         $codecs = $this->bars($this->counts($rows, 'source_video_codec'));
         $reasons = $this->bars($this->reasonCounts($rows));
+        $libraryMix = $this->libraryMix($rows);
         $watchSeconds = $this->sum($rows, 'watched_sec');
         $previousWatchSeconds = $this->sum($previousRows, 'watched_sec');
         $plays = count($rows);
@@ -53,29 +65,48 @@ final class PlaybackStatisticsService
         $transcodeRate = $plays > 0 ? (int) round(($directness['transcode_count'] / $plays) * 100) : 0;
         $previousDirectness = $this->directness($previousRows);
         $previousTranscodeRate = count($previousRows) > 0 ? (int) round(($previousDirectness['transcode_count'] / count($previousRows)) * 100) : null;
+        $finishRate = $this->finishRate($rows);
+        $previousFinishRate = $this->finishRate($previousRows);
         $trending = $this->trending($rows);
         $mostWatched = $this->mostWatched($repository, $range, $rows);
+        $isUserScoped = $this->filterUser !== null;
+        $scope = $isUserScoped ? $this->filterUser : 'all users';
+        if ($this->filterLibrary !== null) {
+            $scope .= ' · ' . $this->filterLibrary;
+        }
+        $subLabel = self::RANGES[$range]['sub'] . ' · ' . $scope;
+
+        $kpis = [
+            $this->kpi('Total Watch Time', '#7c5cff', $this->duration($watchSeconds), $this->delta($watchSeconds, $previousWatchSeconds, $range, 'watch time')),
+            $this->kpi('Total Plays', '#3b9eff', $this->comma($plays), $this->delta($plays, $previousPlays, $range, 'plays')),
+        ];
+        if (!$isUserScoped) {
+            $kpis[] = $this->kpi('Active Users', '#34d8a6', (string) count($users), ['text' => 'unique viewers', 'color' => 'rgba(255,255,255,0.42)']);
+        }
+        $kpis[] = $this->finishRateKpi($finishRate, $previousFinishRate, $range);
+        $kpis[] = $this->kpi('Transcode Rate', '#f7b955', $transcodeRate . '%', $this->rateDelta($transcodeRate, $previousTranscodeRate, $range));
 
         return [
             'range' => $range,
-            'ranges' => $this->ranges($range),
-            'subLabel' => self::RANGES[$range]['sub'] . ' - all libraries',
+            'user' => $this->filterUser ?? '',
+            'isUserScoped' => $isUserScoped,
+            'filterUsers' => $repository->users(),
+            'subLabel' => $subLabel,
             'trending' => $trending,
             'hasTrending' => $trending !== [],
             'mostWatched' => $mostWatched,
             'hasMostWatched' => $mostWatched['series'] !== [] || $mostWatched['movies'] !== [],
-            'kpis' => [
-                $this->kpi('Total Watch Time', '#7c5cff', $this->duration($watchSeconds), $this->delta($watchSeconds, $previousWatchSeconds, $range, 'watch time')),
-                $this->kpi('Total Plays', '#3b9eff', $this->comma($plays), $this->delta($plays, $previousPlays, $range, 'plays')),
-                $this->kpi('Active Users', '#34d8a6', (string) count($users), ['text' => 'unique viewers', 'color' => 'rgba(255,255,255,0.42)']),
-                $this->kpi('Transcode Rate', '#f7b955', $transcodeRate . '%', $this->rateDelta($transcodeRate, $previousTranscodeRate, $range)),
-            ],
+            'kpis' => $kpis,
             'totalWatch' => $this->duration($watchSeconds),
             'totalWatchDelta' => $this->delta($watchSeconds, $previousWatchSeconds, $range, 'previous period')['text'],
             'totalWatchDeltaColor' => $this->delta($watchSeconds, $previousWatchSeconds, $range, 'previous period')['color'],
             'trend' => $this->trend($rows, $range, $now),
             'trendUnit' => $this->trendUnit($range),
             'topUsers' => array_slice($users, 0, 6),
+            'libraryMix' => $libraryMix,
+            'hasLibraryMix' => $libraryMix['legend'] !== [],
+            'heatmap' => $this->heatmap($rows),
+            'monthHeatmap' => $this->monthHeatmap($rows, $range, $now),
             'directnessConic' => $directness['conic'],
             'directVal' => $directness['direct_pct'] . '%',
             'directnessLegend' => $directness['legend'],
@@ -90,6 +121,7 @@ final class PlaybackStatisticsService
             'clientsTranscode' => $clients['transcode'],
             'clientsUsage' => $clients['usage'],
             'usersTable' => $users,
+            'requestWatch' => (new RequestWatchRateService())->data($rows, $range, $this->filterUser, $now, $this->filterLibrary),
             'isEmpty' => $plays === 0,
         ];
     }
@@ -123,7 +155,7 @@ final class PlaybackStatisticsService
     private function mostWatched(PlayHistoryRepository $repository, string $range, array $rangeRows): array
     {
         // The 'all' range already fetched the full table; don't fetch it twice.
-        $rows = $range === 'all' ? $rangeRows : $repository->statisticsRowsForPeriod(null, null);
+        $rows = $range === 'all' ? $rangeRows : $repository->statisticsRowsForPeriod(null, null, $this->filterUser, $this->filterLibrary);
         $groups = $this->groupTitles($rows);
 
         $series = $this->titleCards(array_filter($groups, static fn (array $g): bool => (bool) $g['isEpisode']));
@@ -218,6 +250,16 @@ final class PlaybackStatisticsService
             $groupUsers = $group['users'];
             $userCount = count($groupUsers);
             $plays = (int) $group['plays'];
+            $historyQuery = ['search' => (string) $group['title']];
+            if ($this->filterLibrary !== null) {
+                $historyQuery['library'] = $this->filterLibrary;
+            }
+            $meta = $plays . ($plays === 1 ? ' play' : ' plays');
+            if ($this->filterUser !== null) {
+                $meta .= ' · ' . $this->duration((int) $group['watched']);
+            } else {
+                $meta .= ' · ' . $userCount . ($userCount === 1 ? ' viewer' : ' viewers');
+            }
 
             $items[] = [
                 'title' => (string) $group['title'],
@@ -225,10 +267,9 @@ final class PlaybackStatisticsService
                 'plays' => $plays,
                 'users' => $userCount,
                 'multi' => $userCount > 1,
-                'meta' => $plays . ($plays === 1 ? ' play' : ' plays')
-                    . ' · ' . $userCount . ($userCount === 1 ? ' viewer' : ' viewers'),
+                'meta' => $meta,
                 'poster' => $this->poster((string) $group['itemId'], (bool) $group['isEpisode']),
-                'href' => '/history?search=' . rawurlencode((string) $group['title']),
+                'href' => HistoryFilters::path('/history', $this->filterRange, $this->filterUser, $historyQuery),
             ];
         }
 
@@ -377,32 +418,14 @@ final class PlaybackStatisticsService
         $end = $now->modify('-' . $days . ' days');
         $start = $now->modify('-' . ($days * 2) . ' days');
 
-        return $repository->statisticsRowsForPeriod($start, $end);
-    }
-
-    /**
-     * @return array<int, array{key: string, label: string, href: string, active: bool}>
-     */
-    private function ranges(string $active): array
-    {
-        $ranges = [];
-        foreach (self::RANGES as $key => $range) {
-            $ranges[] = [
-                'key' => $key,
-                'label' => (string) $range['label'],
-                'href' => '/statistics?range=' . $key,
-                'active' => $key === $active,
-            ];
-        }
-
-        return $ranges;
+        return $repository->statisticsRowsForPeriod($start, $end, $this->filterUser, $this->filterLibrary);
     }
 
     /**
      * @param array<int, \Dibi\Row> $rows
      * @return array<int, array<string, mixed>>
      */
-    private function users(array $rows): array
+    private function users(array $rows, string $range): array
     {
         $users = [];
 
@@ -418,13 +441,19 @@ final class PlaybackStatisticsService
         $max = $this->maxInt(array_map(static fn (array $user): int => (int) $user['min'], $users));
         $index = 0;
 
-        return array_values(array_map(function (array $user) use ($max, &$index): array {
+        return array_values(array_map(function (array $user) use ($max, &$index, $range): array {
             $color = self::COLORS[$index % count(self::COLORS)];
             $index++;
             $avg = (int) round((int) $user['min'] / max(1, (int) $user['plays']));
 
             return [
                 'user' => $user['user'],
+                'href' => HistoryFilters::path(
+                    '/statistics',
+                    $range,
+                    (string) $user['user'],
+                    $this->filterLibrary !== null ? ['library' => $this->filterLibrary] : [],
+                ),
                 'initials' => $this->initials((string) $user['user']),
                 'avatarBg' => 'linear-gradient(135deg,' . $color . ',#3b9eff)',
                 'color' => $color,
@@ -434,6 +463,218 @@ final class PlaybackStatisticsService
                 'w' => (int) round(((int) $user['min'] / $max) * 100) . '%',
             ];
         }, $users));
+    }
+
+    /**
+     * Share of plays that reached ~95% of runtime. Live TV (runtime 0) is ignored.
+     *
+     * @param array<int, \Dibi\Row> $rows
+     */
+    private function finishRate(array $rows): ?int
+    {
+        $eligible = 0;
+        $finished = 0;
+
+        foreach ($rows as $row) {
+            if ((int) ($row['runtime_sec'] ?? 0) <= 0) {
+                continue;
+            }
+            $eligible++;
+            if ((int) ($row['is_finished'] ?? 0) === 1) {
+                $finished++;
+            }
+        }
+
+        if ($eligible === 0) {
+            return null;
+        }
+
+        return (int) round(($finished / $eligible) * 100);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function finishRateKpi(?int $current, ?int $previous, string $range): array
+    {
+        if ($current === null) {
+            return $this->kpi('Finish Rate', '#ff6b9d', '—', [
+                'text' => 'no runtime data',
+                'color' => 'rgba(255,255,255,0.42)',
+            ]);
+        }
+
+        return $this->kpi('Finish Rate', '#ff6b9d', $current . '%', $this->rateDelta($current, $previous, $range));
+    }
+
+    /**
+     * Watch-time mix by the type-derived library label (Movies, TV Shows, …).
+     *
+     * @param array<int, \Dibi\Row> $rows
+     * @return array<string, mixed>
+     */
+    private function libraryMix(array $rows): array
+    {
+        $buckets = [];
+
+        foreach ($rows as $row) {
+            $name = trim((string) ($row['library'] ?? ''));
+            $name = $name !== '' ? $name : 'Other';
+            $buckets[$name] ??= ['name' => $name, 'sec' => 0, 'plays' => 0];
+            $buckets[$name]['sec'] += (int) ($row['watched_sec'] ?? 0);
+            $buckets[$name]['plays']++;
+        }
+
+        uasort($buckets, static fn (array $a, array $b): int => $b['sec'] <=> $a['sec']);
+        $totalSec = max(1, array_sum(array_map(static fn (array $bucket): int => (int) $bucket['sec'], $buckets)));
+        $legend = [];
+        $conicSegments = [];
+        $index = 0;
+
+        foreach ($buckets as $bucket) {
+            $color = self::COLORS[$index % count(self::COLORS)];
+            $sharePct = (int) round(((int) $bucket['sec'] / $totalSec) * 100);
+            $conicSegments[] = ['pct' => $sharePct, 'color' => $color];
+            $legend[] = [
+                'name' => (string) $bucket['name'],
+                'color' => $color,
+                'pct' => $sharePct . '%',
+                'watch' => $this->duration((int) $bucket['sec']),
+                'plays' => $this->comma((int) $bucket['plays']),
+            ];
+            $index++;
+        }
+
+        return [
+            'conic' => $conicSegments === [] ? 'conic-gradient(rgba(255,255,255,.08) 0% 100%)' : $this->conic($conicSegments),
+            'legend' => $legend,
+        ];
+    }
+
+    /**
+     * 7×24 play-count grid, Monday-first, using the server timezone of started_at.
+     *
+     * @param array<int, \Dibi\Row> $rows
+     * @return array{hours: array<int, string>, days: array<int, array<string, mixed>>}
+     */
+    private function heatmap(array $rows): array
+    {
+        $dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        $counts = array_fill(0, 7, array_fill(0, 24, 0));
+
+        foreach ($rows as $row) {
+            try {
+                $started = new \DateTimeImmutable((string) $row['started_at']);
+            } catch (\Exception) {
+                continue;
+            }
+
+            $dow = ((int) $started->format('N')) - 1;
+            $hour = (int) $started->format('G');
+            $counts[$dow][$hour]++;
+        }
+
+        $flat = [];
+        foreach ($counts as $hours) {
+            foreach ($hours as $count) {
+                $flat[] = $count;
+            }
+        }
+        $max = max(1, ...$flat);
+
+        $hours = [];
+        for ($hour = 0; $hour < 24; $hour++) {
+            $hours[] = $hour % 6 === 0 ? (string) $hour : '';
+        }
+
+        $days = [];
+        foreach ($dayLabels as $index => $label) {
+            $cells = [];
+            foreach ($counts[$index] as $hour => $count) {
+                $plays = $count === 1 ? '1 play' : $count . ' plays';
+                $cells[] = [
+                    'count' => $count,
+                    'heat' => $count > 0 ? number_format(0.28 + 0.72 * ($count / $max), 2, '.', '') : '0',
+                    'title' => $label . ' ' . str_pad((string) $hour, 2, '0', STR_PAD_LEFT) . ':00 · ' . $plays,
+                ];
+            }
+            $days[] = ['label' => $label, 'cells' => $cells];
+        }
+
+        return ['hours' => $hours, 'days' => $days];
+    }
+
+    /**
+     * Calendar spread of watch time, one cell per month. Complements the 7×24
+     * heatmap: that one is the weekly rhythm, this one is how viewing is
+     * spread across recorded history.
+     *
+     * @param array<int, \Dibi\Row> $rows
+     * @return array{visible: bool, months: array<int, string>, years: array<int, array<string, mixed>>}
+     */
+    private function monthHeatmap(array $rows, string $range, \DateTimeImmutable $now): array
+    {
+        $monthLabels = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+        $empty = ['visible' => false, 'months' => $monthLabels, 'years' => []];
+
+        if ($range !== 'all' || $rows === []) {
+            return $empty;
+        }
+
+        $seconds = [];
+        $plays = [];
+        $minYear = (int) $now->format('Y');
+        $maxYear = $minYear;
+
+        foreach ($rows as $row) {
+            try {
+                $started = new \DateTimeImmutable((string) $row['started_at']);
+            } catch (\Exception) {
+                continue;
+            }
+
+            $year = (int) $started->format('Y');
+            $month = (int) $started->format('n');
+            $key = $year . '-' . $month;
+            $seconds[$key] = ($seconds[$key] ?? 0) + (int) $row['watched_sec'];
+            $plays[$key] = ($plays[$key] ?? 0) + 1;
+            $minYear = min($minYear, $year);
+            $maxYear = max($maxYear, $year);
+        }
+
+        if ($seconds === []) {
+            return $empty;
+        }
+
+        $max = max(1, ...array_values($seconds));
+        $nowMonth = ((int) $now->format('Y') * 12) + (int) $now->format('n');
+        $years = [];
+
+        for ($year = $minYear; $year <= $maxYear; $year++) {
+            $cells = [];
+            for ($month = 1; $month <= 12; $month++) {
+                $key = $year . '-' . $month;
+                $sec = $seconds[$key] ?? 0;
+                $count = $plays[$key] ?? 0;
+                $future = (($year * 12) + $month) > $nowMonth;
+                $started = (new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $month)));
+                $label = $started->format('M Y');
+                $playsLabel = $count === 1 ? '1 play' : $count . ' plays';
+
+                $cells[] = [
+                    'count' => $count,
+                    'heat' => $sec > 0 ? number_format(0.28 + 0.72 * ($sec / $max), 2, '.', '') : '0',
+                    'title' => $future
+                        ? $label
+                        : $label . ' · ' . $this->duration($sec) . ' · ' . $playsLabel,
+                    'future' => $future,
+                ];
+            }
+
+            $years[] = ['label' => (string) $year, 'cells' => $cells];
+        }
+
+        return ['visible' => true, 'months' => $monthLabels, 'years' => $years];
     }
 
     /**

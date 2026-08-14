@@ -15,5 +15,7 @@ final class HistoryTemplateTest extends TestCase
             '{{ summary.shown }} <small>of {{ summary.filtered_total }}</small>',
             $template
         );
+        $this->assertStringContainsString('_filter_bar.twig', $template);
+        $this->assertStringContainsString('show_search', file_get_contents(TEMPLATES_DIR . '/_filter_bar.twig') ?: '');
     }
 }

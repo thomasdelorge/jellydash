@@ -67,7 +67,7 @@ The project is very young and in very active development.
 
 - **Libraries.** An overview of all your libraries with item counts and type breakdowns. New libraries are picked up automatically.
 
-- **Jellyseerr requests** (optional). The latest requests with their current status, plus a push notification when a new request comes in. The page only appears once you connect your Jellyseerr instance.
+- **Jellyseerr requests** (optional). The latest requests with their current status, plus a push notification when a new request comes in. The page only appears once you connect your Jellyseerr instance. Statistics also shows which available requests each user actually started watching.
 
 - **Notifications** (optional). "Anna started watching The Office" straight to your phone or desktop, even with the app closed. Delivered through Telegram, Pushover, a Discord webhook, Web Push, or any combination of them.
 

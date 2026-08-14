@@ -5,13 +5,7 @@
         <h1>Statistics</h1>
         <p>{{ stats.subLabel }}</p>
     </div>
-    <div class="header-actions">
-        <div class="segmented-control" aria-label="Statistics range">
-            {% for range in stats.ranges %}
-                <a class="{{ range.active ? 'is-active' : '' }}" href="{{ range.href }}">{{ range.label }}</a>
-            {% endfor %}
-        </div>
-    </div>
+    {% include "_filter_bar.twig" %}
 {% endblock %}
 
 {% block dashboard_content %}
@@ -69,11 +63,11 @@
 
         <header class="stats-section-header">
             <strong>General</strong>
-            <span>Total watch time - top users</span>
+            <span>{{ stats.isUserScoped ? 'Total watch time' : 'Total watch time - top users' }}</span>
             <i></i>
         </header>
 
-        <section class="stats-general-grid">
+        <section class="stats-general-grid{{ stats.isUserScoped ? ' is-solo' : '' }}">
             <article class="stats-card stats-watch-card">
                 <div class="stats-card-head">
                     <div>
@@ -93,25 +87,117 @@
                 </div>
             </article>
 
-            <article class="stats-card">
-                <div class="stats-list-head">
-                    <strong>Top Users</strong>
+            {% if not stats.isUserScoped %}
+                <article class="stats-card">
+                    <div class="stats-list-head">
+                        <strong>Top Users</strong>
+                        <span>by watch time</span>
+                    </div>
+                    <div class="stats-user-list">
+                        {% for user in stats.topUsers %}
+                            <a class="stats-user-row" href="{{ user.href }}">
+                                <span class="watcher-avatar" style="background: {{ user.avatarBg }}">{{ user.initials }}</span>
+                                <div>
+                                    <p><strong>{{ user.user }}</strong><small>{{ user.watch }}</small></p>
+                                    <span class="stats-track"><i style="width: {{ user.w }}; background: {{ user.color }}"></i></span>
+                                </div>
+                            </a>
+                        {% else %}
+                            <p class="stats-empty-note">No user history in this range.</p>
+                        {% endfor %}
+                    </div>
+                </article>
+            {% endif %}
+        </section>
+
+        <header class="stats-section-header">
+            <strong>Libraries</strong>
+            <span>Watch time by media type</span>
+            <i></i>
+        </header>
+
+        <section class="stats-library-grid">
+            <article class="stats-card stats-donut-card">
+                <div>
+                    <strong>Library Mix</strong>
                     <span>by watch time</span>
                 </div>
-                <div class="stats-user-list">
-                    {% for user in stats.topUsers %}
-                        <div class="stats-user-row">
-                            <span class="watcher-avatar" style="background: {{ user.avatarBg }}">{{ user.initials }}</span>
-                            <div>
-                                <p><strong>{{ user.user }}</strong><small>{{ user.watch }}</small></p>
-                                <span class="stats-track"><i style="width: {{ user.w }}; background: {{ user.color }}"></i></span>
+                <div class="stats-donut-layout">
+                    <div class="stats-donut" style="background: {{ stats.libraryMix.conic }}">
+                        <span><strong>{{ stats.totalWatch }}</strong><small>Watch</small></span>
+                    </div>
+                    <div class="stats-legend">
+                        {% for item in stats.libraryMix.legend %}
+                            <p><i style="background: {{ item.color }}"></i><span>{{ item.name }}</span><b>{{ item.pct }}</b></p>
+                        {% else %}
+                            <p class="stats-empty-note">No library mix in this range.</p>
+                        {% endfor %}
+                    </div>
+                </div>
+            </article>
+        </section>
+
+        <header class="stats-section-header">
+            <strong>Activity</strong>
+            <span>{{ stats.monthHeatmap.visible ? 'Weekly rhythm and monthly spread' : 'Plays by hour and weekday' }}</span>
+            <i></i>
+        </header>
+
+        <section class="stats-activity-grid{{ stats.monthHeatmap.visible ? ' has-month-spread' : '' }}">
+            <article class="stats-card stats-heatmap-card">
+                <div class="stats-list-head">
+                    <strong>When people watch</strong>
+                    <span>server timezone</span>
+                </div>
+                <div class="stats-heatmap" role="img" aria-label="Playback activity by hour and weekday">
+                    <div class="stats-heatmap-hours">
+                        <span class="stats-heatmap-day"></span>
+                        <div class="stats-heatmap-cells is-labels">
+                            {% for hour in stats.heatmap.hours %}
+                                <span>{{ hour }}</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% for day in stats.heatmap.days %}
+                        <div class="stats-heatmap-row">
+                            <span class="stats-heatmap-day">{{ day.label }}</span>
+                            <div class="stats-heatmap-cells">
+                                {% for cell in day.cells %}
+                                    <i class="{{ cell.count > 0 ? 'is-active' : '' }}" style="--heat: {{ cell.heat }}" title="{{ cell.title }}"></i>
+                                {% endfor %}
                             </div>
                         </div>
-                    {% else %}
-                        <p class="stats-empty-note">No user history in this range.</p>
                     {% endfor %}
                 </div>
             </article>
+            {% if stats.monthHeatmap.visible %}
+                <article class="stats-card stats-heatmap-card">
+                    <div class="stats-list-head">
+                        <strong>Watch time by month</strong>
+                        <span>all recorded history</span>
+                    </div>
+                    <div class="stats-heatmap stats-month-heatmap" role="img" aria-label="Watch time by month">
+                        <div class="stats-heatmap-hours">
+                            <span class="stats-heatmap-day"></span>
+                            <div class="stats-heatmap-cells is-labels is-months">
+                                {% for month in stats.monthHeatmap.months %}
+                                    <span>{{ month }}</span>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% for year in stats.monthHeatmap.years %}
+                            <div class="stats-heatmap-row">
+                                <span class="stats-heatmap-day">{{ year.label }}</span>
+                                <div class="stats-heatmap-cells is-months">
+                                    {% for cell in year.cells %}
+                                        <i class="{{ cell.count > 0 ? 'is-active' : '' }}{{ cell.future ? ' is-future' : '' }}" style="--heat: {{ cell.heat }}" title="{{ cell.title }}"></i>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                </article>
+            {% endif %}
         </section>
 
         <header class="stats-section-header">
@@ -264,36 +350,98 @@
             </article>
         </section>
 
-        <header class="stats-section-header">
-            <strong>Users</strong>
-            <span>Watch time - plays - average per play</span>
-            <i></i>
-        </header>
+        {% if seerr_enabled and stats.requestWatch.visible %}
+            <header class="stats-section-header">
+                <strong>Requests</strong>
+                <span>Available Jellyseerr requests matched by title to local history</span>
+                <i></i>
+            </header>
 
-        <section class="stats-user-table" aria-label="User statistics">
-            <div class="stats-user-head">
-                <span>User</span>
-                <span>Watch Time</span>
-                <span>Plays</span>
-                <span>Avg / Play</span>
-                <span>Share</span>
-            </div>
-            {% for user in stats.usersTable %}
-                <article class="stats-user-table-row">
-                    <div class="stats-user-name">
-                        <span class="watcher-avatar" style="background: {{ user.avatarBg }}">{{ user.initials }}</span>
-                        <strong>{{ user.user }}</strong>
-                    </div>
-                    <span class="history-mono">{{ user.watch }}</span>
-                    <span class="history-mono">{{ user.plays }}</span>
-                    <span class="history-mono">{{ user.avg }}</span>
-                    <span class="stats-track"><i style="width: {{ user.w }}"></i></span>
-                </article>
+            {% if stats.isUserScoped %}
+                <section class="stats-request-user" aria-label="Request watch rate">
+                    <article class="stats-card">
+                        <div class="stats-card-head">
+                            <div>
+                                <span class="stats-eyebrow">Request Watch Rate</span>
+                                <strong>{{ stats.requestWatch.rate }}%</strong>
+                                <small>{{ stats.requestWatch.watched }} of {{ stats.requestWatch.eligible }} available requests watched</small>
+                            </div>
+                        </div>
+                        <div class="stats-list-head">
+                            <strong>Unwatched requests</strong>
+                            <span>asked for, not started</span>
+                        </div>
+                        {% if stats.requestWatch.unwatched is not empty %}
+                            <ul class="stats-unwatched-list">
+                                {% for item in stats.requestWatch.unwatched %}
+                                    <li>
+                                        <span>{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
+                                        <small>{{ item.type }}</small>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        {% else %}
+                            <p class="stats-empty-note">Every available request in this range has been started.</p>
+                        {% endif %}
+                    </article>
+                </section>
             {% else %}
-                <article class="stats-user-table-row is-empty">
-                    <span>No user statistics in this range.</span>
-                </article>
-            {% endfor %}
-        </section>
+                <section class="stats-request-table" aria-label="Request watch rate by user">
+                    <div class="stats-request-head">
+                        <span>Requester</span>
+                        <span>Requests</span>
+                        <span>Watched</span>
+                        <span>Rate</span>
+                        <span>Unwatched</span>
+                    </div>
+                    {% for row in stats.requestWatch.users %}
+                        <a class="stats-request-table-row" href="{{ row.href }}">
+                            <div class="stats-user-name">
+                                <span class="watcher-avatar">{{ row.initials }}</span>
+                                <strong>{{ row.user }}</strong>
+                            </div>
+                            <span class="history-mono">{{ row.eligible }}</span>
+                            <span class="history-mono">{{ row.watched }}</span>
+                            <span class="history-mono">{{ row.rateLabel }}</span>
+                            <span class="history-mono">{{ row.unwatched }}</span>
+                        </a>
+                    {% endfor %}
+                </section>
+            {% endif %}
+        {% endif %}
+
+        {% if not stats.isUserScoped %}
+            <header class="stats-section-header">
+                <strong>Users</strong>
+                <span>Watch time - plays - average per play</span>
+                <i></i>
+            </header>
+
+            <section class="stats-user-table" aria-label="User statistics">
+                <div class="stats-user-head">
+                    <span>User</span>
+                    <span>Watch Time</span>
+                    <span>Plays</span>
+                    <span>Avg / Play</span>
+                    <span>Share</span>
+                </div>
+                {% for user in stats.usersTable %}
+                    <a class="stats-user-table-row" href="{{ user.href }}">
+                        <div class="stats-user-name">
+                            <span class="watcher-avatar" style="background: {{ user.avatarBg }}">{{ user.initials }}</span>
+                            <strong>{{ user.user }}</strong>
+                        </div>
+                        <span class="history-mono">{{ user.watch }}</span>
+                        <span class="history-mono">{{ user.plays }}</span>
+                        <span class="history-mono">{{ user.avg }}</span>
+                        <span class="stats-track"><i style="width: {{ user.w }}"></i></span>
+                    </a>
+                {% else %}
+                    <article class="stats-user-table-row is-empty">
+                        <span>No user statistics in this range.</span>
+                    </article>
+                {% endfor %}
+            </section>
+        {% endif %}
     </div>
 {% endblock %}

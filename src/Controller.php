@@ -45,6 +45,7 @@ abstract class Controller
             'desktop' => $agent->isDesktop(),
             'phone' => $agent->isPhone(),
             'iphone' => $agent->isiPhone(),
+            'playback_nav' => Jellyfin\HistoryFilters::navSuffix(),
         ];
 
         return array_merge($base, $extra);

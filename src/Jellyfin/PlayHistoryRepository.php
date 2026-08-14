@@ -240,7 +240,7 @@ final class PlayHistoryRepository
     /**
      * @return array<int, \Dibi\Row>
      */
-    public function statisticsRows(string $range, ?\DateTimeImmutable $now = null): array
+    public function statisticsRows(string $range, ?\DateTimeImmutable $now = null, ?string $user = null, ?string $library = null): array
     {
         $now ??= new \DateTimeImmutable('now');
 
@@ -251,7 +251,7 @@ final class PlayHistoryRepository
             default => null,
         };
 
-        return $this->statisticsRowsForPeriod($since, null);
+        return $this->statisticsRowsForPeriod($since, null, $user, $library);
     }
 
     /**
@@ -272,7 +272,7 @@ final class PlayHistoryRepository
     /**
      * @return array<int, \Dibi\Row>
      */
-    public function statisticsRowsForPeriod(?\DateTimeImmutable $start, ?\DateTimeImmutable $end): array
+    public function statisticsRowsForPeriod(?\DateTimeImmutable $start, ?\DateTimeImmutable $end, ?string $user = null, ?string $library = null): array
     {
         $selection = $this->db->select('*')->from('play_history');
 
@@ -282,6 +282,14 @@ final class PlayHistoryRepository
 
         if ($end !== null) {
             $selection->where('started_at < %s', $end->format('Y-m-d H:i:s'));
+        }
+
+        if ($user !== null && $user !== '') {
+            $selection->where('user_name = %s', $user);
+        }
+
+        if ($library !== null && $library !== '') {
+            $selection->where('library = %s', $library);
         }
 
         return $selection->orderBy('started_at')->asc()->fetchAll();

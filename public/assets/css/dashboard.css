@@ -1753,6 +1753,10 @@ svg {
     justify-content: flex-end;
 }
 
+.filter-bar .segmented-control {
+    flex: 0 0 auto;
+}
+
 .filter-bar select,
 .search-control,
 .filter-submit {
@@ -2211,7 +2215,7 @@ svg {
 
 .stats-kpi-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 16px;
     margin-bottom: 30px;
 }
@@ -2296,6 +2300,21 @@ svg {
 }
 
 .stats-general-grid {
+    grid-template-columns: 1.45fr 1fr;
+}
+
+.stats-general-grid.is-solo {
+    grid-template-columns: 1fr;
+}
+
+.stats-library-grid,
+.stats-activity-grid {
+    display: grid;
+    gap: 18px;
+    margin-bottom: 34px;
+}
+
+.stats-activity-grid.has-month-spread {
     grid-template-columns: 1.45fr 1fr;
 }
 
@@ -2424,6 +2443,8 @@ svg {
     align-items: center;
     gap: 11px;
     min-width: 0;
+    color: inherit;
+    text-decoration: none;
 }
 
 .stats-user-row > div,
@@ -2631,11 +2652,9 @@ svg {
     min-height: 58px;
     padding-top: 13px;
     padding-bottom: 13px;
+    color: inherit;
+    text-decoration: none;
     border-top: 1px solid rgba(255, 255, 255, .05);
-}
-
-.stats-user-table-row:hover {
-    background: rgba(255, 255, 255, .025);
 }
 
 .stats-user-table-row:first-of-type {
@@ -2669,6 +2688,146 @@ svg {
     color: rgba(255, 255, 255, .46);
     font-size: 13px;
     line-height: 1.5;
+}
+
+.stats-filter {
+    flex-wrap: nowrap;
+}
+
+.stats-heatmap-card {
+    padding: 18px 20px 22px;
+}
+
+.stats-heatmap {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 14px;
+}
+
+.stats-heatmap-hours,
+.stats-heatmap-row {
+    display: grid;
+    grid-template-columns: 42px 1fr;
+    gap: 8px;
+    align-items: center;
+}
+
+.stats-heatmap-day {
+    color: rgba(255, 255, 255, .42);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.stats-heatmap-cells {
+    display: grid;
+    grid-template-columns: repeat(24, minmax(0, 1fr));
+    gap: 3px;
+}
+
+.stats-heatmap-cells i {
+    display: block;
+    aspect-ratio: 1;
+    min-height: 10px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, .06);
+}
+
+.stats-heatmap-cells i.is-active {
+    background: #7c5cff;
+    opacity: var(--heat, 1);
+}
+
+.stats-heatmap-cells.is-labels span {
+    color: rgba(255, 255, 255, .34);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    text-align: center;
+}
+
+.stats-month-heatmap .stats-heatmap-hours,
+.stats-month-heatmap .stats-heatmap-row {
+    grid-template-columns: 48px 1fr;
+}
+
+.stats-heatmap-cells.is-months {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.stats-heatmap-cells i.is-future {
+    background: transparent;
+}
+
+.stats-request-table {
+    overflow: hidden;
+    margin-bottom: 34px;
+    border: 1px solid rgba(255, 255, 255, .07);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .02);
+}
+
+.stats-request-head,
+.stats-request-table-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 1.7fr) 90px 90px 80px 90px;
+    gap: 16px;
+    align-items: center;
+    padding: 0 20px;
+}
+
+.stats-request-head {
+    height: 40px;
+    color: rgba(255, 255, 255, .38);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .7px;
+    text-transform: uppercase;
+    border-bottom: 1px solid rgba(255, 255, 255, .07);
+}
+
+.stats-request-table-row {
+    min-height: 58px;
+    padding-top: 13px;
+    padding-bottom: 13px;
+    color: inherit;
+    text-decoration: none;
+    border-top: 1px solid rgba(255, 255, 255, .05);
+}
+
+.stats-request-table-row:hover,
+.stats-user-table-row:hover {
+    background: rgba(255, 255, 255, .025);
+}
+
+.stats-request-user {
+    margin-bottom: 34px;
+}
+
+.stats-unwatched-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 12px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.stats-unwatched-list li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.stats-unwatched-list span {
+    color: #e9e7f3;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.stats-unwatched-list small {
+    color: rgba(255, 255, 255, .42);
+    font-size: 11px;
 }
 
 .library-status-chip {
@@ -3252,7 +3411,9 @@ svg {
     .library-summary-grid,
     .stats-general-grid,
     .stats-transcoding-grid,
-    .stats-client-grid {
+    .stats-client-grid,
+    .stats-library-grid,
+    .stats-activity-grid {
         grid-template-columns: 1fr;
     }
 
@@ -3271,12 +3432,15 @@ svg {
         flex-direction: column;
     }
 
-    .stats-user-table {
+    .stats-user-table,
+    .stats-request-table {
         overflow-x: auto;
     }
 
     .stats-user-head,
-    .stats-user-table-row {
+    .stats-user-table-row,
+    .stats-request-head,
+    .stats-request-table-row {
         min-width: 760px;
     }
 }

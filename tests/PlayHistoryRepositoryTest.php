@@ -136,6 +136,33 @@ final class PlayHistoryRepositoryTest extends TestCase
         $this->assertContains('PHPUnit Viewer', $this->repository->users());
     }
 
+    public function testStatisticsRowsCanFilterByUser(): void
+    {
+        $now = new \DateTimeImmutable('2099-08-20 12:00:00');
+        $this->repository->logActiveStreams([$this->stream(900, 3600)], $now);
+
+        $this->dibi->insert('play_history', [
+            'session_key' => 'phpunit-stats-filter-alice',
+            'user_name' => 'PHPUnit Stats Alice',
+            'item_id' => 'phpunit-alice-item',
+            'item_type' => 'Movie',
+            'item_name' => 'Dune',
+            'library' => 'Movies',
+            'play_method' => 'DirectPlay',
+            'watched_sec' => 600,
+            'runtime_sec' => 3600,
+            'started_at' => '2099-08-18 12:00:00',
+            'updated_at' => '2099-08-18 12:10:00',
+        ])->execute();
+
+        $all = $this->repository->statisticsRows('week', $now);
+        $alice = $this->repository->statisticsRows('week', $now, 'PHPUnit Stats Alice');
+
+        $this->assertGreaterThanOrEqual(2, count($all));
+        $this->assertCount(1, $alice);
+        $this->assertSame('PHPUnit Stats Alice', (string) $alice[0]['user_name']);
+    }
+
     /**
      * @return array<string, mixed>
      */

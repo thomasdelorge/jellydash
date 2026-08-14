@@ -35,4 +35,16 @@ final class RequestSyncServiceTest extends TestCase
             }
         }
     }
+
+    public function testJellyfinUsernameIsReadFromRequestedBy(): void
+    {
+        $username = (new \ReflectionClass(RequestSyncService::class))
+            ->getMethod('jellyfinUsername')
+            ->invoke(
+                new RequestSyncService(),
+                ['requestedBy' => ['displayName' => 'Alice D', 'jellyfinUsername' => 'alice']]
+            );
+
+        $this->assertSame('alice', $username);
+    }
 }

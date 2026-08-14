@@ -5,19 +5,20 @@ declare(strict_types=1);
 namespace Mk\Framework\Pages;
 
 use Mk\Framework\Controller;
+use Mk\Framework\Jellyfin\HistoryFilters;
 use Mk\Framework\Jellyfin\PlaybackStatisticsService;
-use Mk\Framework\Main;
 
 final class StatisticsController extends Controller
 {
     public function handle(): void
     {
-        $range = Main::captureGetString('range') ?? 'week';
-        if (!in_array($range, ['week', 'month', 'year', 'all'], true)) {
-            $range = 'week';
-        }
-
-        $stats = (new PlaybackStatisticsService())->data($range);
+        $filters = HistoryFilters::fromRequest();
+        $stats = (new PlaybackStatisticsService())->data(
+            HistoryFilters::toStatsRange($filters->range),
+            $filters->user !== '' ? $filters->user : null,
+            null,
+            $filters->library !== '' ? $filters->library : null,
+        );
 
         $this->render('statistics/index', [
             'layout' => $this->layout([
@@ -26,6 +27,10 @@ final class StatisticsController extends Controller
                 'hide_footer' => true,
             ]),
             'stats' => $stats,
+            'users' => $stats['filterUsers'],
+            'filters' => $filters->view(),
+            'filter_action' => '/statistics',
+            'show_search' => false,
         ]);
     }
 }

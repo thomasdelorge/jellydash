@@ -44,7 +44,7 @@ class View
         $this->twig->addGlobal('server_label', AppSettings::get('server_label', 'Jellyfin dashboard'));
         $this->twig->addGlobal('show_server_stats', AppSettings::bool('show_server_stats', true));
 
-        // Jellyseerr nav entry only shows once the integration is configured.
+        // Jellyseerr is configured: Statistics can show request watch-rate.
         $this->twig->addGlobal('seerr_enabled', (new Jellyseerr\JellyseerrClient())->isConfigured());
 
         // App version (VERSION file at the repo root), shown in the sidebar.

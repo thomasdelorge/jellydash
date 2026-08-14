@@ -7,13 +7,12 @@ namespace Mk\Framework\Pages;
 use Mk\Framework\Controller;
 use Mk\Framework\Jellyfin\HistoryFilters;
 use Mk\Framework\Jellyfin\PlayHistoryRepository;
-use Mk\Framework\Main;
 
 final class HistoryController extends Controller
 {
     public function handle(): void
     {
-        $filters = $this->filters();
+        $filters = HistoryFilters::fromRequest();
         $repository = new PlayHistoryRepository();
         $rows = $repository->historyRows($filters);
         $totalFiltered = $repository->historyTotal($filters);
@@ -26,28 +25,10 @@ final class HistoryController extends Controller
             'groups' => $this->groups($rows),
             'summary' => $this->summary($rows, $totalFiltered, $repository->totalRows()),
             'users' => $repository->users(),
-            'filters' => [
-                'search' => $filters->search,
-                'user' => $filters->user,
-                'library' => $filters->library,
-                'range' => $filters->range,
-            ],
+            'filters' => $filters->view(),
+            'filter_action' => '/history',
+            'show_search' => true,
         ]);
-    }
-
-    private function filters(): HistoryFilters
-    {
-        $range = Main::captureGetString('range') ?? '30';
-        if (!in_array($range, ['7', '30', 'all'], true)) {
-            $range = '30';
-        }
-
-        return new HistoryFilters(
-            search: trim((string) (Main::captureGetString('search') ?? '')),
-            user: trim((string) (Main::captureGetString('user') ?? '')),
-            library: trim((string) (Main::captureGetString('library') ?? '')),
-            range: $range,
-        );
     }
 
     /**

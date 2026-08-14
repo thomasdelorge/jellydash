@@ -71,7 +71,7 @@ final class RequestSyncService
             $mediaStatus = (int) ($media['status'] ?? 0);
 
             if (in_array($requestId, $known, true)) {
-                $repo->updateStatuses($requestId, $requestStatus, $mediaStatus);
+                $repo->updateStatuses($requestId, $requestStatus, $mediaStatus, $this->jellyfinUsername($request));
                 continue;
             }
 
@@ -85,6 +85,7 @@ final class RequestSyncService
                 'year' => $details['year'],
                 'poster_path' => $details['posterPath'],
                 'requested_by' => $this->requesterName($request),
+                'jellyfin_username' => $this->jellyfinUsername($request),
                 'request_status' => $requestStatus,
                 'media_status' => $mediaStatus,
                 'is_4k' => ($request['is4k'] ?? false) ? 1 : 0,
@@ -135,6 +136,20 @@ final class RequestSyncService
         }
 
         return null;
+    }
+
+    /**
+     * Jellyfin username when Seerr knows it. Used to match play_history.user_name
+     * even when Seerr's display name differs from the Jellyfin username.
+     *
+     * @param array<string, mixed> $request
+     */
+    private function jellyfinUsername(array $request): ?string
+    {
+        $by = is_array($request['requestedBy'] ?? null) ? $request['requestedBy'] : [];
+        $value = trim((string) ($by['jellyfinUsername'] ?? ''));
+
+        return $value !== '' ? mb_substr($value, 0, 128) : null;
     }
 
     /**

@@ -5,31 +5,7 @@
         <h1>History</h1>
         <p>Showing {{ summary.shown }} of {{ summary.filtered_total }} plays</p>
     </div>
-    <form class="filter-bar" method="get" action="/history">
-        <label class="search-control">
-            <span aria-hidden="true">Search</span>
-            <input type="search" name="search" value="{{ filters.search }}" placeholder="Search title or user">
-        </label>
-        <select name="user" aria-label="User">
-            <option value="" {{ filters.user == '' ? 'selected' : '' }}>All users</option>
-            {% for user in users %}
-                <option value="{{ user }}" {{ filters.user == user ? 'selected' : '' }}>{{ user }}</option>
-            {% endfor %}
-        </select>
-        <select name="library" aria-label="Library">
-            <option value="" {{ filters.library == '' ? 'selected' : '' }}>All libraries</option>
-            <option value="Movies" {{ filters.library == 'Movies' ? 'selected' : '' }}>Movies</option>
-            <option value="TV Shows" {{ filters.library == 'TV Shows' ? 'selected' : '' }}>TV Shows</option>
-            <option value="Music" {{ filters.library == 'Music' ? 'selected' : '' }}>Music</option>
-            <option value="Videos" {{ filters.library == 'Videos' ? 'selected' : '' }}>Videos</option>
-        </select>
-        <select name="range" aria-label="Range">
-            <option value="7" {{ filters.range == '7' ? 'selected' : '' }}>Last 7 days</option>
-            <option value="30" {{ filters.range == '30' ? 'selected' : '' }}>Last 30 days</option>
-            <option value="all" {{ filters.range == 'all' ? 'selected' : '' }}>All time</option>
-        </select>
-        <button type="submit" class="filter-submit">Apply</button>
-    </form>
+    {% include "_filter_bar.twig" %}
 {% endblock %}
 
 {% block dashboard_content %}

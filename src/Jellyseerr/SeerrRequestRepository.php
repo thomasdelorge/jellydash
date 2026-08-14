@@ -73,14 +73,51 @@ final class SeerrRequestRepository
         }
     }
 
-    public function updateStatuses(int $requestId, int $requestStatus, int $mediaStatus): void
-    {
-        $this->db->update('seerr_requests', [
+    public function updateStatuses(
+        int $requestId,
+        int $requestStatus,
+        int $mediaStatus,
+        ?string $jellyfinUsername = null,
+    ): void {
+        $data = [
             'request_status' => $requestStatus,
             'media_status' => $mediaStatus,
-        ])
+        ];
+        if ($jellyfinUsername !== null && $jellyfinUsername !== '') {
+            $data['jellyfin_username'] = $jellyfinUsername;
+        }
+
+        $this->db->update('seerr_requests', $data)
             ->where('request_id = %i', $requestId)
             ->execute();
+    }
+
+    /**
+     * Available (or partially available) requests in a window, for watch-rate stats.
+     * Pending, declined, and failed requests are excluded: they cannot be watched yet.
+     *
+     * @return array<int, \Dibi\Row>
+     */
+    public function eligibleForPeriod(?\DateTimeImmutable $start, ?\DateTimeImmutable $end = null): array
+    {
+        $selection = $this->db->select('*')
+            ->from('seerr_requests')
+            ->where('media_status IN %in', [RequestMapper::MEDIA_PARTIALLY_AVAILABLE, RequestMapper::MEDIA_AVAILABLE])
+            ->where('request_status NOT IN %in', [
+                RequestMapper::REQUEST_PENDING,
+                RequestMapper::REQUEST_DECLINED,
+                RequestMapper::REQUEST_FAILED,
+            ]);
+
+        if ($start !== null) {
+            $selection->where('requested_at >= %s', $start->format('Y-m-d H:i:s'));
+        }
+
+        if ($end !== null) {
+            $selection->where('requested_at < %s', $end->format('Y-m-d H:i:s'));
+        }
+
+        return $selection->orderBy('requested_at')->asc()->fetchAll();
     }
 
     /**
@@ -148,6 +185,7 @@ final class SeerrRequestRepository
                 `year` varchar(4) DEFAULT NULL,
                 `poster_path` varchar(255) DEFAULT NULL,
                 `requested_by` varchar(128) DEFAULT NULL,
+                `jellyfin_username` varchar(128) DEFAULT NULL,
                 `request_status` tinyint NOT NULL DEFAULT 0,
                 `media_status` tinyint NOT NULL DEFAULT 0,
                 `is_4k` tinyint(1) NOT NULL DEFAULT 0,
@@ -168,6 +206,7 @@ final class SeerrRequestRepository
                 `year` TEXT DEFAULT NULL,
                 `poster_path` TEXT DEFAULT NULL,
                 `requested_by` TEXT DEFAULT NULL,
+                `jellyfin_username` TEXT DEFAULT NULL,
                 `request_status` INTEGER NOT NULL DEFAULT 0,
                 `media_status` INTEGER NOT NULL DEFAULT 0,
                 `is_4k` INTEGER NOT NULL DEFAULT 0,
@@ -179,7 +218,19 @@ final class SeerrRequestRepository
             )'
         );
         $this->platform->createSqliteIndex('idx_requested_at', 'seerr_requests', ['requested_at']);
+        $this->ensureColumn(
+            'jellyfin_username',
+            '`jellyfin_username` varchar(128) DEFAULT NULL AFTER `requested_by`',
+            '`jellyfin_username` TEXT DEFAULT NULL',
+        );
 
         self::$schemaConnections[$this->db] = true;
+    }
+
+    private function ensureColumn(string $column, string $mariaDbDefinition, string $sqliteDefinition): void
+    {
+        if (!$this->platform->columnExists('seerr_requests', $column)) {
+            $this->platform->addColumn('seerr_requests', $mariaDbDefinition, $sqliteDefinition);
+        }
     }
 }

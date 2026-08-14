@@ -60,6 +60,7 @@ final class SQLiteSchemaCompatibilityTest extends TestCase
             'idx_user_name',
         ], $this->namedIndexes('play_history'));
         $this->assertSame(['idx_requested_at'], $this->namedIndexes('seerr_requests'));
+        $this->assertTrue($this->database->getPlatform()->columnExists('seerr_requests', 'jellyfin_username'));
     }
 
     public function testEnvironmentConnectionUsesSQLiteSafetySettings(): void
