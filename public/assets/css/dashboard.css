@@ -18,6 +18,8 @@
     --color-amber: #f7b955;
     --font-ui: "Plus Jakarta Sans", Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --font-mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    --sidebar-width: 248px;
+    --sidebar-width-collapsed: 72px;
 }
 
 * {
@@ -78,10 +80,10 @@ svg {
 
 .dashboard-sidebar {
     display: flex;
-    flex: 0 0 248px;
+    flex: 0 0 var(--sidebar-width);
     flex-direction: column;
     gap: 22px;
-    width: 248px;
+    width: var(--sidebar-width);
     padding: 22px 16px;
     overflow-y: auto;
     background: var(--color-sidebar);
@@ -3050,6 +3052,96 @@ svg {
 
     50% {
         opacity: 1;
+    }
+}
+
+/* Icon rail on in-between widths (tablets, small windows). Phones (≤900px)
+   keep the overlay drawer; large desktops keep the full labeled sidebar. */
+@media (min-width: 901px) and (max-width: 1199px) {
+    .dashboard-sidebar {
+        flex-basis: var(--sidebar-width-collapsed);
+        width: var(--sidebar-width-collapsed);
+        gap: 16px;
+        padding: 18px 10px;
+        overflow: visible;
+    }
+
+    .dashboard-sidebar .brand {
+        justify-content: center;
+    }
+
+    .dashboard-sidebar .brand-copy,
+    .dashboard-sidebar .nav-section,
+    .dashboard-sidebar .nav-label,
+    .dashboard-sidebar .settings-copy {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+
+    .dashboard-sidebar .server-card,
+    .dashboard-sidebar .update-status,
+    .dashboard-sidebar .settings-row[hidden] {
+        display: none;
+    }
+
+    .dashboard-sidebar .nav-item,
+    .dashboard-sidebar .settings-row {
+        position: relative;
+        justify-content: center;
+        gap: 0;
+        padding: 11px 0;
+    }
+
+    .dashboard-sidebar .settings-row {
+        min-height: 42px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+    }
+
+    .dashboard-sidebar .nav-pill {
+        position: absolute;
+        top: 3px;
+        right: 2px;
+        margin: 0;
+        min-width: 16px;
+        padding: 0 4px;
+        font-size: 9px;
+        line-height: 16px;
+    }
+
+    .dashboard-sidebar .nav-pill.is-loading {
+        min-width: 16px;
+        min-height: 16px;
+    }
+
+    .dashboard-sidebar .nav-item[data-label]:hover::after,
+    .dashboard-sidebar .nav-item[data-label]:focus-visible::after,
+    .dashboard-sidebar .settings-row[data-label]:hover::after,
+    .dashboard-sidebar .settings-row[data-label]:focus-visible::after {
+        position: absolute;
+        top: 50%;
+        left: calc(100% + 10px);
+        z-index: 80;
+        padding: 6px 10px;
+        color: var(--color-text);
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.2;
+        white-space: nowrap;
+        pointer-events: none;
+        border: 1px solid rgba(255, 255, 255, .1);
+        border-radius: 8px;
+        background: #16141f;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, .45);
+        transform: translateY(-50%);
+        content: attr(data-label);
     }
 }
 

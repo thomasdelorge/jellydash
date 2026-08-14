@@ -22,6 +22,8 @@ final class RouterTest extends TestCase
 
         $this->assertStringContainsString('Now Playing', $output);
         $this->assertStringContainsString('app-shell', $output);
+        $this->assertStringContainsString('nav-label', $output);
+        $this->assertStringNotContainsString('data-sidebar-fold', $output);
         $this->assertSame(200, http_response_code());
     }
 
