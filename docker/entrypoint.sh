@@ -24,6 +24,14 @@ chown -R www-data:www-data \
     /var/www/html/var/log \
     /var/www/html/public/uploads
 
+# Console and pollers must run as the web user. Otherwise a first SQLite open
+# (new DB_NAME, or -wal/-shm after PRAGMA journal_mode=WAL) is created as
+# root:644 and Apache/www-data gets SQLITE_READONLY. Who creates the file
+# first used to depend on boot timing, so it looked random.
+as_web() {
+    su -s /bin/sh -c "$1" www-data
+}
+
 # Clear compiled Twig templates on start so a deploy's template changes actually
 # take effect. Production runs Twig with auto_reload off and the cache dir is a
 # persistent volume, so stale compiled templates would otherwise survive the
@@ -33,7 +41,7 @@ find /var/www/html/cache -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/de
 # Optional auth: seed the initial admin when configured. Idempotent: an
 # existing user is never touched, so in-app password changes survive restarts.
 if [ -n "${AUTH_ADMIN_USER:-}" ] && [ -n "${AUTH_ADMIN_PASSWORD:-}" ]; then
-    php /var/www/html/bin/console.php user:ensure || true
+    as_web "php /var/www/html/bin/console.php user:ensure" || true
 fi
 
 # Background workers (disable all with POLLER_ENABLED=false). Each runs detached
@@ -49,7 +57,7 @@ if [ "${POLLER_ENABLED:-true}" = "true" ]; then
     # the dashboard open.
     (
         while true; do
-            php /var/www/html/bin/console.php history:poll || true
+            as_web "php /var/www/html/bin/console.php history:poll || true"
             sleep "${POLL_INTERVAL}"
         done
     ) &
@@ -58,17 +66,17 @@ if [ "${POLLER_ENABLED:-true}" = "true" ]; then
     # a cold scan inside a visitor's request.
     (
         while true; do
-            php /var/www/html/bin/console.php libraries:warm || true
+            as_web "php /var/www/html/bin/console.php libraries:warm || true"
             sleep "${LIBRARIES_CACHE_TTL}"
         done
     ) &
 
-    # Mirrors Jellyseerr requests and pushes an alert when a new one appears.
+    # Mirrors Jellyseerr requests and pushes an alert when a new request appears.
     # Requests trickle in far slower than playback, so this runs on its own,
     # longer interval. No-op unless JELLYSEER_URL / JELLYSEER_API_TOKEN are set.
     (
         while true; do
-            php /var/www/html/bin/console.php seerr:poll || true
+            as_web "php /var/www/html/bin/console.php seerr:poll || true"
             sleep "${SEERR_POLL_INTERVAL}"
         done
     ) &

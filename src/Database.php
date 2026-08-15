@@ -15,6 +15,12 @@ class Database
         // or by the caller where a graceful fallback exists (e.g. the login flow).
         $this->dibi = $connection ?? new \Dibi\Connection($this->connectionConfig());
         $this->platform = new DatabasePlatform($this->dibi);
+        if ($this->platform->isSqlite()) {
+            $file = $this->dibi->getConfig('database');
+            if (is_string($file) && $file !== '') {
+                self::relaxSqlitePermissions($file);
+            }
+        }
     }
 
     // Return whole Dibi instance
@@ -119,6 +125,20 @@ class Database
                 'PRAGMA journal_mode = WAL',
             ],
         ];
+    }
+
+    /**
+     * The web app (www-data) and Docker console/pollers may not share a uid.
+     * SQLite plus WAL creates sibling -wal/-shm files owned by whoever opened
+     * the DB first; 0644 root files then look "read-only" to Apache.
+     */
+    private static function relaxSqlitePermissions(string $path): void
+    {
+        foreach ([$path, $path . '-wal', $path . '-shm'] as $file) {
+            if (is_file($file)) {
+                @chmod($file, 0666);
+            }
+        }
     }
 
     /* CREATE NEW USER IN THE 'users' TABLE,

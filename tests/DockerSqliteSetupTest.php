@@ -18,6 +18,12 @@ final class DockerSqliteSetupTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/^\s+sqlite3\s+\\\\$/m', $dockerfile);
         $this->assertStringContainsString('/var/www/html/var/data', $entrypoint);
         $this->assertStringContainsString('database:migrate-to-sqlite', $entrypoint);
+        $this->assertStringContainsString('su -s /bin/sh -c', $entrypoint);
+        $this->assertStringContainsString('www-data', $entrypoint);
+        $this->assertStringContainsString('as_web "php /var/www/html/bin/console.php history:poll || true"', $entrypoint);
+        $this->assertStringContainsString('as_web "php /var/www/html/bin/console.php libraries:warm || true"', $entrypoint);
+        $this->assertStringContainsString('as_web "php /var/www/html/bin/console.php seerr:poll || true"', $entrypoint);
+        $this->assertStringContainsString('as_web "php /var/www/html/bin/console.php user:ensure"', $entrypoint);
     }
 
     public function testSQLiteComposeSetupIsSeparateAndPersistent(): void
